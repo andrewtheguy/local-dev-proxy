@@ -28,8 +28,16 @@ Then open:
 - `http://s3browser.localhost:2800`
 
 ## Notes / Troubleshooting
-- Caddy is configured to listen on `:2800` by default (see `Caddyfile`). Change it if `2800` is already in use.
-- Visiting `http://localhost:2800` (or any other host on port `2800`) will return a 404 by design; use `http://s3browser.localhost:2800`.
+- Caddy listens on port `2800` by default (see `Caddyfile`). Change it if `2800` is already in use.
 - `.localhost` domains resolve to `127.0.0.1` without editing `/etc/hosts`.
 - This setup expects `s3browser` to listen on `localhost:8170`. If it uses a different port, update `Caddyfile`.
 - Caddy is bound only to `127.0.0.1` and `::1` (dual‑stack localhost) via `bind` in the `Caddyfile`.
+
+## Adding more services
+Add a new site block to `Caddyfile`:
+```caddy
+http://myservice.localhost:2800 {
+	bind 127.0.0.1 ::1
+	reverse_proxy localhost:9000
+}
+```

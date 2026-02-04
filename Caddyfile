@@ -1,17 +1,8 @@
 {
-	# For local development: avoid ACME/cert issuance attempts.
-	# If you want HTTPS on localhost, remove this and use Caddy's local CA flow.
 	auto_https off
 }
 
-# Caddy listens on :2800 to avoid needing sudo for port 80.
-# It proxies the local s3browser server running on localhost:8170.
-:2800 {
+http://s3browser.localhost:2800 {
 	bind 127.0.0.1 ::1
-
-	@s3browser host s3browser.localhost
-	reverse_proxy @s3browser http://localhost:8170
-
-	# Default: anything else on this port gets a 404 (instead of a welcome page).
-	respond "Not Found" 404
+	reverse_proxy localhost:8170
 }
