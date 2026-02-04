@@ -8,7 +8,7 @@ http://s3browser.localhost {
 	reverse_proxy localhost:8170
 }
 
-http://minios3.localhost {
+http://minios3.localhost, http://*.minios3.localhost {
 	bind 127.0.0.1 ::1
 	reverse_proxy localhost:9000
 }
@@ -16,4 +16,9 @@ http://minios3.localhost {
 http://minioconsole.localhost {
 	bind 127.0.0.1 ::1
 	reverse_proxy localhost:9001
+}
+
+http:// {
+	bind 127.0.0.1 ::1
+	respond "Not Found caddy" 404
 }
