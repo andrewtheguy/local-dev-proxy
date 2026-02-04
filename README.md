@@ -1,44 +1,64 @@
-This repo contains a Zellij layout and Caddy config to run an `s3browser` web UI on a friendly local hostname.
+This repo contains a Zellij layout and Caddy config to run MinIO and s3browser on friendly local hostnames.
 
-What you get:
-- `http://s3browser.localhost:2800` -> proxied to `http://localhost:8170`
-- a Zellij session layout that starts both `caddy` and `s3browser`
+## What you get
+
+| URL | Service |
+|-----|---------|
+| `http://s3browser.localhost:2800` | s3browser UI |
+| `http://minios3.localhost:2800` | MinIO S3 API |
+| `http://minioconsole.localhost:2800` | MinIO Console |
 
 ## Prereqs
-- `zellij` (layout tested with `zellij 0.43.x`)
-- `caddy` v2
-- `s3browser` available on your `PATH` and configured to listen on `localhost:8170`
 
-Install Caddy on macOS:
+- `zellij` (tested with 0.43.x)
+- `caddy` v2
+- `minio` server
+- `s3browser` configured to connect to MinIO
+
+Install on macOS:
 ```sh
 brew install caddy
+go install github.com/minio/minio@latest
+```
+
+## Configuration
+
+Ports are configured in `config.env`:
+```
+MINIO_PORT=19000
+MINIO_CONSOLE_PORT=19001
+S3BROWSER_PORT=18170
 ```
 
 ## Run (Zellij)
-Start a new session using the layout:
+
 ```sh
 zellij -s s3browser -n layouts/s3browser.kdl
 ```
 
-This opens two panes:
-- `caddy`: runs `caddy run --config Caddyfile --adapter caddyfile`
-- `s3browser`: runs `s3browser` (edit the command in `layouts/s3browser.kdl` if needed)
-
-Then open:
-- `http://s3browser.localhost:2800`
+This opens three panes:
+- `caddy`: reverse proxy
+- `minio`: S3-compatible object storage
+- `s3browser`: web UI
 
 ## Notes / Troubleshooting
-- Caddy listens on port `2800` by default (see `Caddyfile`). Change it if `2800` is already in use.
-- `.localhost` domains resolve to `127.0.0.1` without editing `/etc/hosts`.
-- This setup expects `s3browser` to listen on `localhost:8170`. If it uses a different port, update `Caddyfile`.
-- Caddy is bound only to `127.0.0.1` and `::1` (dual‑stack localhost) via `bind` in the `Caddyfile`.
+
+- Caddy listens on port `2800` (see `Caddyfile`). Change `http_port` if already in use.
+- `.localhost` domains resolve to `127.0.0.1` without `/etc/hosts` changes.
+- MinIO default credentials: `minioadmin` / `minioadmin`
+- Data is stored in `data/` (gitignored).
 
 ## Adding more services
-Add a new site block to `Caddyfile`:
+
+1. Add port to `config.env`:
+```
+MYSERVICE_PORT=18000
+```
+
+2. Add site block to `Caddyfile`:
 ```caddy
 http://myservice.localhost {
 	bind 127.0.0.1 ::1
-	reverse_proxy localhost:9000
+	reverse_proxy localhost:{$MYSERVICE_PORT}
 }
 ```
-The default port `2800` is set via `http_port` in the global options.

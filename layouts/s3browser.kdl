@@ -14,8 +14,6 @@ layout {
   tab name="s3browser" split_direction="vertical" {
     pane name="caddy" command="./scripts/caddy.sh"
     pane name="minio" command="./scripts/minio.sh"
-    pane name="s3browser" command="bash" focus=true {
-      args "-lc" "s3browser"
-    }
+    pane name="s3browser" command="./scripts/s3browser.sh" focus=true
   }
 }

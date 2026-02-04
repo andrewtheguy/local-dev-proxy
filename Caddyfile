@@ -5,17 +5,17 @@
 
 http://s3browser.localhost {
 	bind 127.0.0.1 ::1
-	reverse_proxy localhost:8170
+	reverse_proxy localhost:{$S3BROWSER_PORT}
 }
 
 http://minios3.localhost, http://*.minios3.localhost {
 	bind 127.0.0.1 ::1
-	reverse_proxy localhost:9000
+	reverse_proxy localhost:{$MINIO_PORT}
 }
 
 http://minioconsole.localhost {
 	bind 127.0.0.1 ::1
-	reverse_proxy localhost:9001
+	reverse_proxy localhost:{$MINIO_CONSOLE_PORT}
 }
 
 http:// {

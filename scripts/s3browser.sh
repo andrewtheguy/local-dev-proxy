@@ -2,8 +2,6 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-set -a
 source config.env
-set +a
 
-exec caddy run --config Caddyfile --adapter caddyfile
+exec s3browser -b "127.0.0.1:$S3BROWSER_PORT"
