@@ -8,7 +8,7 @@ http://s3browser.localhost {
 	reverse_proxy localhost:8170
 }
 
-http://s3minio.localhost {
+http://minios3.localhost {
 	bind 127.0.0.1 ::1
 	reverse_proxy localhost:9000
 }
