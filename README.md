@@ -36,8 +36,9 @@ Then open:
 ## Adding more services
 Add a new site block to `Caddyfile`:
 ```caddy
-http://myservice.localhost:2800 {
+http://myservice.localhost {
 	bind 127.0.0.1 ::1
 	reverse_proxy localhost:9000
 }
 ```
+The default port `2800` is set via `http_port` in the global options.

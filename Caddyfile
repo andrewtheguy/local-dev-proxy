@@ -1,8 +1,9 @@
 {
 	auto_https off
+	http_port 2800
 }
 
-http://s3browser.localhost:2800 {
+http://s3browser.localhost {
 	bind 127.0.0.1 ::1
 	reverse_proxy localhost:8170
 }
