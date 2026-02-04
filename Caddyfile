@@ -18,10 +18,10 @@ http://minioconsole.localhost {
 	reverse_proxy localhost:{$MINIO_CONSOLE_PORT}
 }
 
-http://weeds3.localhost, http://*.weeds3.localhost {
-	bind 127.0.0.1 ::1
-	reverse_proxy localhost:{$WEED_S3_PORT}
-}
+# http://weeds3.localhost, http://*.weeds3.localhost {
+# 	bind 127.0.0.1 ::1
+# 	reverse_proxy localhost:{$WEED_S3_PORT}
+# }
 
 http:// {
 	bind 127.0.0.1 ::1
