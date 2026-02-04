@@ -13,9 +13,8 @@ layout {
 
   tab name="s3browser" split_direction="vertical" {
     pane name="caddy" command="./scripts/caddy.sh"
-
+    pane name="minio" command="./scripts/minio.sh"
     pane name="s3browser" command="bash" focus=true {
-      // Adjust this command/flags to whatever starts your s3browser on :8170.
       args "-lc" "s3browser"
     }
   }
