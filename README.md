@@ -33,8 +33,10 @@ S3BROWSER_PORT=18170
 ## Run (Zellij)
 
 ```sh
-zellij -s caddy -n layouts/caddy.kdl
+./run-caddy-session.sh
 ```
+
+This starts a Zellij session named `caddy` with the layout. If a previous session exists but is exited, it will be replaced. If the session is already active, you'll be prompted to exit it first.
 
 This opens three panes:
 - `caddy`: reverse proxy
