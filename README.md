@@ -33,7 +33,7 @@ S3BROWSER_PORT=18170
 ## Run (Zellij)
 
 ```sh
-zellij -s s3browser -n layouts/s3browser.kdl
+zellij -s caddy -n layouts/caddy.kdl
 ```
 
 This opens three panes:
