@@ -15,8 +15,9 @@ if [[ -n "$SESSION_INFO" ]]; then
         zellij delete-session "$SESSION_NAME"
         exec zellij -s "$SESSION_NAME" -n "$LAYOUT"
     else
-        # Session exists and is active, attach to it
-        exec zellij attach "$SESSION_NAME"
+        # Session exists and is active, alert user
+        echo "Session '$SESSION_NAME' is already active. Please exit it first."
+        exit 1
     fi
 else
     # Session doesn't exist, create it with the layout
