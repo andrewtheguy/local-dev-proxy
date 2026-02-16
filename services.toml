@@ -1,8 +1,3 @@
-[env]
-MINIO_PORT = "19000"
-MINIO_CONSOLE_PORT = "19001"
-S3BROWSER_PORT = "18170"
-
 [caddy]
 admin_url = "http://127.0.0.1:2020"
 http_port = 2800
@@ -13,7 +8,7 @@ command = ["caddy", "run", "--config", "config/caddy-bootstrap.json"]
 
 [services.minio]
 command = ["minio", "server", "data", "--address", ":{MINIO_PORT}", "--console-address", ":{MINIO_CONSOLE_PORT}"]
-env = {MINIO_BROWSER_REDIRECT = "off"}
+env = {MINIO_BROWSER_REDIRECT = "off", MINIO_PORT = "19000", MINIO_CONSOLE_PORT = "19001"}
 
 [[services.minio.routes]]
 id = "minio"
@@ -27,6 +22,7 @@ target_port_env = "MINIO_CONSOLE_PORT"
 
 [services.s3browser]
 command = ["s3browser", "-b", "127.0.0.1:{S3BROWSER_PORT}"]
+env = {S3BROWSER_PORT = "18170"}
 
 [[services.s3browser.routes]]
 id = "s3browser"

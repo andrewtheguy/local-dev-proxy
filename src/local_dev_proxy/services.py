@@ -43,31 +43,26 @@ def run_session_up(paths: ProjectPaths | None = None, session_name: str = "caddy
 def run_service(name: str, paths: ProjectPaths | None = None) -> int:
     resolved_paths = paths or get_paths()
     manifest = _load_manifest(resolved_paths)
-    env = _merged_env(manifest)
 
     service = manifest.services.get(name)
     if service is None:
         raise ServiceError(f"Unknown service: {name}")
 
-    command = resolve_command(service.command, env)
+    effective_env = {**service.env, **os.environ}
+    command = resolve_command(service.command, effective_env)
 
-    runtime_env = dict(manifest.env)
-    runtime_env.update(os.environ)
+    runtime_env = os.environ.copy()
     runtime_env.update(service.env)
 
     if service.routes:
         _wait_for_caddy_health(manifest.caddy.admin_url, timeout_seconds=10.0)
-        _sync_all_routes(resolved_paths, manifest, env)
+        _sync_all_routes(resolved_paths, manifest)
 
     return _run_process(command, runtime_env, resolved_paths.root)
 
 
-def _sync_all_routes(
-    paths: ProjectPaths,
-    manifest: RoutesManifest,
-    env: Mapping[str, str],
-) -> None:
-    routes = build_routes(manifest, env)
+def _sync_all_routes(paths: ProjectPaths, manifest: RoutesManifest) -> None:
+    routes = build_routes(manifest, env_override=os.environ)
 
     with CaddyAdminClient(manifest.caddy.admin_url) as client:
         client.ensure_server(paths.root / "config" / "caddy-bootstrap.json")
@@ -121,12 +116,6 @@ def _load_manifest(paths: ProjectPaths) -> RoutesManifest:
         return load_routes(paths.services_file)
     except RouteConfigError as exc:
         raise ServiceError(str(exc)) from exc
-
-
-def _merged_env(manifest: RoutesManifest) -> dict[str, str]:
-    env = dict(manifest.env)
-    env.update(os.environ)
-    return env
 
 
 def _find_session_line(session_name: str) -> str | None:

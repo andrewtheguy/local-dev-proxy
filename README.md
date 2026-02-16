@@ -18,7 +18,7 @@ Local dev proxy: Caddy reverse proxy + zellij-managed services for MinIO and s3b
 
 ## Configuration
 
-Everything lives in `services.toml`: caddy settings, port assignments (`[env]`), service commands, and routes.
+Everything lives in `services.toml`: caddy settings, service commands, env/ports, and routes.
 
 ## Usage
 
@@ -33,11 +33,12 @@ Re-running `session up` reattaches if the session is still active, or creates a 
 
 ## How to add a service
 
-1. Add a section to `services.toml`:
+1. Add a section to `services.toml` (command, port, and route together):
 
 ```toml
 [services.myservice]
 command = ["myservice", "--port", "{MYSERVICE_PORT}"]
+env = {MYSERVICE_PORT = "18200"}
 
 [[services.myservice.routes]]
 id = "myservice"
@@ -45,14 +46,7 @@ hosts = ["myservice.localhost"]
 target_port_env = "MYSERVICE_PORT"
 ```
 
-2. Add the port to the `[env]` table in `services.toml`:
-
-```toml
-[env]
-MYSERVICE_PORT = "18200"
-```
-
-3. Add a pane in `layouts/caddy.kdl`:
+2. Add a pane in `layouts/caddy.kdl`:
 
 ```kdl
 pane name="myservice" command="uv" {
@@ -64,3 +58,4 @@ pane name="myservice" command="uv" {
 
 - **Service URL not proxying:** confirm the service process is alive in its zellij pane and the port is set in `services.toml`.
 - **Caddy not responding:** check the caddy pane for errors. It must be running before other services can sync routes.
+- **Session attached elsewhere:** to disconnect other clients, press `Ctrl+O` then `W` to open the session manager, then `Ctrl+X` to detach them.

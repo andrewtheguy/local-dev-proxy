@@ -55,7 +55,6 @@ class ServiceDef:
 
 @dataclass(frozen=True)
 class RoutesManifest:
-    env: dict[str, str]
     caddy: CaddySettings
     services: dict[str, ServiceDef]
 
@@ -65,11 +64,6 @@ def load_routes(path: Path) -> RoutesManifest:
         raise RouteConfigError(f"Services manifest not found: {path}")
 
     data = tomllib.loads(path.read_text())
-
-    env_data = data.get("env", {})
-    if not isinstance(env_data, dict):
-        raise RouteConfigError("[env] must be a table")
-    manifest_env = {str(k): str(v) for k, v in env_data.items()}
 
     caddy_data = data.get("caddy", {})
     if not isinstance(caddy_data, dict):
@@ -146,7 +140,6 @@ def load_routes(path: Path) -> RoutesManifest:
         )
 
     return RoutesManifest(
-        env=manifest_env,
         caddy=CaddySettings(admin_url=admin_url, http_port=http_port, bind=bind_hosts),
         services=services,
     )
@@ -168,13 +161,18 @@ def resolve_command(command: list[str], env: Mapping[str, str]) -> list[str]:
     return [_substitute(arg) for arg in command]
 
 
-def build_routes(manifest: RoutesManifest, env: Mapping[str, str]) -> list[dict]:
+def build_routes(
+    manifest: RoutesManifest, env_override: Mapping[str, str] | None = None,
+) -> list[dict]:
     # Resolve all ports first and check for duplicates.
     resolved: list[tuple[ServiceRoute, int]] = []
     seen_ports: dict[int, str] = {}
     for service in manifest.services.values():
+        effective_env: dict[str, str] = dict(service.env)
+        if env_override:
+            effective_env.update(env_override)
         for route in service.routes:
-            port = require_port(env, route.target_port_env)
+            port = require_port(effective_env, route.target_port_env)
             if port in seen_ports:
                 raise RouteConfigError(
                     f"Port {port} used by both {seen_ports[port]} and {route.id}"

@@ -8,11 +8,6 @@ from local_dev_proxy.routes import RouteConfigError, build_routes, load_routes, 
 
 
 SERVICES_TOML = """
-[env]
-MINIO_PORT = "19000"
-MINIO_CONSOLE_PORT = "19001"
-S3BROWSER_PORT = "18170"
-
 [caddy]
 admin_url = "http://127.0.0.1:2019"
 http_port = 2800
@@ -23,7 +18,7 @@ command = ["caddy", "run", "--config", "config/caddy-bootstrap.json"]
 
 [services.minio]
 command = ["minio", "server", "data", "--address", ":{MINIO_PORT}"]
-env = {MINIO_BROWSER_REDIRECT = "off"}
+env = {MINIO_BROWSER_REDIRECT = "off", MINIO_PORT = "19000", MINIO_CONSOLE_PORT = "19001"}
 
 [[services.minio.routes]]
 id = "minio"
@@ -37,6 +32,7 @@ target_port_env = "MINIO_CONSOLE_PORT"
 
 [services.s3browser]
 command = ["s3browser", "-b", "127.0.0.1:{S3BROWSER_PORT}"]
+env = {S3BROWSER_PORT = "18170"}
 
 [[services.s3browser.routes]]
 id = "s3browser"
@@ -54,7 +50,7 @@ def _write_manifest(tmp_path: Path) -> Path:
 def test_build_routes_is_deterministic_and_ports_are_resolved(tmp_path: Path) -> None:
     manifest = load_routes(_write_manifest(tmp_path))
 
-    routes = build_routes(manifest, manifest.env)
+    routes = build_routes(manifest)
 
     assert [route.get("@id") for route in routes] == [
         "route-minio",
@@ -75,11 +71,40 @@ def test_build_routes_is_deterministic_and_ports_are_resolved(tmp_path: Path) ->
     }
 
 
-def test_build_routes_raises_when_required_port_is_missing(tmp_path: Path) -> None:
+def test_build_routes_env_override(tmp_path: Path) -> None:
     manifest = load_routes(_write_manifest(tmp_path))
 
-    with pytest.raises(ValueError, match="MINIO_PORT"):
-        build_routes(manifest, env={})
+    routes = build_routes(manifest, env_override={"S3BROWSER_PORT": "9999"})
+
+    upstreams = {
+        route["@id"]: route["handle"][0]["upstreams"][0]["dial"]
+        for route in routes
+        if route.get("@id") != "route-fallback"
+    }
+    assert upstreams["route-s3browser"] == "127.0.0.1:9999"
+
+
+def test_build_routes_raises_when_required_port_is_missing(tmp_path: Path) -> None:
+    toml = """
+[caddy]
+admin_url = "http://127.0.0.1:2019"
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.oops]
+command = ["oops"]
+
+[[services.oops.routes]]
+id = "oops"
+hosts = ["oops.localhost"]
+target_port_env = "OOPS_PORT"
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+    manifest = load_routes(path)
+
+    with pytest.raises(ValueError, match="OOPS_PORT"):
+        build_routes(manifest)
 
 
 def test_listen_addresses_include_ipv6_brackets(tmp_path: Path) -> None:
@@ -108,24 +133,15 @@ def test_service_def_fields(tmp_path: Path) -> None:
     assert caddy_svc.env == {}
 
     minio_svc = manifest.services["minio"]
-    assert minio_svc.env == {"MINIO_BROWSER_REDIRECT": "off"}
+    assert minio_svc.env["MINIO_PORT"] == "19000"
+    assert minio_svc.env["MINIO_BROWSER_REDIRECT"] == "off"
     assert len(minio_svc.routes) == 2
     assert minio_svc.routes[0].id == "minio"
     assert minio_svc.routes[1].id == "minioconsole"
 
 
-def test_manifest_env_parsed(tmp_path: Path) -> None:
-    manifest = load_routes(_write_manifest(tmp_path))
-    assert manifest.env == {
-        "MINIO_PORT": "19000",
-        "MINIO_CONSOLE_PORT": "19001",
-        "S3BROWSER_PORT": "18170",
-    }
-
-
 def test_build_routes_raises_on_duplicate_ports(tmp_path: Path) -> None:
     manifest = load_routes(_write_manifest(tmp_path))
-    env = {**manifest.env, "S3BROWSER_PORT": "19000"}  # same as MINIO_PORT
 
     with pytest.raises(RouteConfigError, match="Port 19000 used by both minio and s3browser"):
-        build_routes(manifest, env)
+        build_routes(manifest, env_override={"S3BROWSER_PORT": "19000"})
