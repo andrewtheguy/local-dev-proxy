@@ -18,6 +18,7 @@ def _paths(tmp_path: Path) -> ProjectPaths:
         data_dir=data_dir,
         state_file=data_dir / "active_services.json",
         state_lock_file=data_dir / ".active_services.lock",
+        caddy_pid_file=data_dir / "caddy.pid",
         layout_file=tmp_path / "layouts" / "caddy.kdl",
         bootstrap_config_file=tmp_path / "config" / "caddy-bootstrap.json",
     )

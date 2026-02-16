@@ -10,10 +10,9 @@ This repo manages a detached Caddy reverse proxy plus zellij-managed local servi
 
 ## Prerequisites
 
-- `brew`
 - `uv`
-- `zellij` (tested with 0.43.x)
 - `caddy`
+- `zellij` (tested with 0.43.x)
 - `minio`
 - `s3browser`
 
@@ -35,45 +34,28 @@ WEED_S3_PORT=18333
 
 Routing config is centralized in `/Users/it3/codes/andrew/zellij-test/routes.toml`.
 
-## Install and start
+## Start and stop
 
-1. Create a local tap once:
-```sh
-brew tap-new andrew/local-dev-proxy
-```
-
-2. Symlink the repo formula into the tap:
-```sh
-ln -sf /Users/it3/codes/andrew/zellij-test/Formula/local-dev-proxy.rb \
-  /opt/homebrew/Library/Taps/andrew/homebrew-local-dev-proxy/Formula/local-dev-proxy.rb
-```
-
-3. Install custom formula from this repo:
-```sh
-brew install --HEAD andrew/local-dev-proxy/local-dev-proxy
-```
-If you change this repo, commit updates before reinstalling so Homebrew can read the latest `main` branch state.
-
-4. Start detached Caddy service:
-```sh
-brew services start local-dev-proxy
-```
-
-5. Sync Python environment:
+1. Install Python dependencies:
 ```sh
 uv sync
 ```
 
-6. Start zellij session for services:
+2. Start zellij session for app services:
 ```sh
 uv run local-dev-proxy session up
 ```
+
+`session up` automatically starts detached Caddy if it is not already running.
 
 This opens two panes:
 - `minio`
 - `s3browser`
 
-Caddy stays detached and keeps running when zellij exits.
+3. Stop detached Caddy when done:
+```sh
+uv run local-dev-proxy caddy stop
+```
 
 ## Route lifecycle
 
@@ -87,6 +69,12 @@ Routes are managed programmatically through Caddy Admin API (`127.0.0.1:2020`).
 ## CLI reference
 
 ```sh
+# detached caddy lifecycle
+uv run local-dev-proxy caddy start
+uv run local-dev-proxy caddy stop
+uv run local-dev-proxy caddy restart
+uv run local-dev-proxy caddy status
+
 # run service process in foreground
 uv run local-dev-proxy service minio
 uv run local-dev-proxy service s3browser
@@ -96,7 +84,6 @@ uv run local-dev-proxy service weed
 uv run local-dev-proxy caddy activate minio
 uv run local-dev-proxy caddy deactivate minio
 uv run local-dev-proxy caddy sync
-uv run local-dev-proxy caddy status
 
 # zellij launcher
 uv run local-dev-proxy session up
@@ -124,8 +111,8 @@ uv run local-dev-proxy caddy sync
 ## Troubleshooting
 
 - `uv run local-dev-proxy caddy status` fails with admin API error:
-  - Confirm detached service is running: `brew services list | rg local-dev-proxy`
-  - Check logs: `tail -n 100 ~/Library/Logs/Homebrew/local-dev-proxy-caddy.log`
+  - Ensure Caddy is running: `uv run local-dev-proxy caddy start`
+  - Restart cleanly: `uv run local-dev-proxy caddy restart`
 - Service starts but URL does not proxy:
   - Confirm service process is alive in zellij pane.
   - Confirm corresponding `*_PORT` is set in `config.env`.

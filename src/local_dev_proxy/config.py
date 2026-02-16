@@ -16,6 +16,7 @@ class ProjectPaths:
     data_dir: Path
     state_file: Path
     state_lock_file: Path
+    caddy_pid_file: Path
     layout_file: Path
     bootstrap_config_file: Path
 
@@ -37,6 +38,7 @@ def get_paths(root: Path | None = None) -> ProjectPaths:
         data_dir=data_dir,
         state_file=data_dir / "active_services.json",
         state_lock_file=data_dir / ".active_services.lock",
+        caddy_pid_file=data_dir / "caddy.pid",
         layout_file=root_path / "layouts" / "caddy.kdl",
         bootstrap_config_file=root_path / "config" / "caddy-bootstrap.json",
     )

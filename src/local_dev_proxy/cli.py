@@ -9,8 +9,11 @@ from .services import (
     activate_service,
     caddy_status,
     deactivate_service,
+    restart_caddy,
     run_named_service,
     run_session_up,
+    start_caddy,
+    stop_caddy,
     sync_caddy,
 )
 
@@ -96,6 +99,42 @@ def caddy_status_command() -> None:
 
     if not status.get("healthy", False):
         raise typer.Exit(code=1)
+
+
+@caddy_app.command("start")
+def caddy_start_command() -> None:
+    """Start Caddy in detached mode using bootstrap JSON config."""
+    try:
+        result = start_caddy()
+    except ServiceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps(result, indent=2))
+
+
+@caddy_app.command("stop")
+def caddy_stop_command() -> None:
+    """Stop detached Caddy via admin API."""
+    try:
+        result = stop_caddy()
+    except ServiceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps(result, indent=2))
+
+
+@caddy_app.command("restart")
+def caddy_restart_command() -> None:
+    """Restart detached Caddy."""
+    try:
+        result = restart_caddy()
+    except ServiceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(json.dumps(result, indent=2))
 
 
 @session_app.command("up")

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 from pathlib import Path
 import signal
 import subprocess
+import time
 from typing import Mapping
+from urllib.parse import urlparse
 
 from .caddy_api import CaddyAPIError, CaddyAdminClient
 from .config import ProjectPaths, get_paths, load_env, require_port
@@ -96,6 +99,75 @@ def caddy_status(paths: ProjectPaths | None = None) -> dict:
     return status
 
 
+def start_caddy(paths: ProjectPaths | None = None) -> dict:
+    resolved_paths = paths or get_paths()
+    manifest, _ = _load_manifest_and_env(resolved_paths)
+
+    current_status = caddy_status(resolved_paths)
+    if current_status.get("healthy", False):
+        return {
+            "admin_url": manifest.caddy.admin_url,
+            "http_port": manifest.caddy.http_port,
+            "started": False,
+            "already_running": True,
+        }
+
+    resolved_paths.data_dir.mkdir(parents=True, exist_ok=True)
+    command = [
+        "caddy",
+        "start",
+        "--config",
+        str(resolved_paths.bootstrap_config_file),
+        "--pidfile",
+        str(resolved_paths.caddy_pid_file),
+    ]
+    _run_command(command, cwd=resolved_paths.root)
+    _wait_for_caddy_health(manifest.caddy.admin_url, timeout_seconds=5.0)
+
+    return {
+        "admin_url": manifest.caddy.admin_url,
+        "http_port": manifest.caddy.http_port,
+        "started": True,
+        "already_running": False,
+    }
+
+
+def stop_caddy(paths: ProjectPaths | None = None) -> dict:
+    resolved_paths = paths or get_paths()
+    manifest, _ = _load_manifest_and_env(resolved_paths)
+
+    current_status = caddy_status(resolved_paths)
+    if not current_status.get("healthy", False):
+        _cleanup_pid_file(resolved_paths)
+        return {
+            "admin_url": manifest.caddy.admin_url,
+            "stopped": False,
+            "already_stopped": True,
+        }
+
+    address = _admin_api_address(manifest.caddy.admin_url)
+    _run_command(["caddy", "stop", "--address", address], cwd=resolved_paths.root)
+    _wait_for_caddy_stop(manifest.caddy.admin_url, timeout_seconds=5.0)
+    _cleanup_pid_file(resolved_paths)
+
+    return {
+        "admin_url": manifest.caddy.admin_url,
+        "stopped": True,
+        "already_stopped": False,
+    }
+
+
+def restart_caddy(paths: ProjectPaths | None = None) -> dict:
+    stop_result = stop_caddy(paths)
+    start_result = start_caddy(paths)
+    return {
+        "admin_url": start_result["admin_url"],
+        "http_port": start_result["http_port"],
+        "stopped": stop_result["stopped"],
+        "started": start_result["started"],
+    }
+
+
 def run_named_service(service_name: str, paths: ProjectPaths | None = None) -> int:
     resolved_paths = paths or get_paths()
     normalized_name = service_name.strip().lower()
@@ -125,6 +197,9 @@ def run_session_up(paths: ProjectPaths | None = None, session_name: str = "caddy
     resolved_paths = paths or get_paths()
     if not resolved_paths.layout_file.exists():
         raise ServiceError(f"Missing zellij layout file: {resolved_paths.layout_file}")
+
+    # Ensure detached proxy is available before service panes attempt route sync.
+    start_caddy(resolved_paths)
 
     session_info = _find_session_line(session_name)
 
@@ -295,3 +370,58 @@ def _run_command(command: list[str], cwd: Path) -> None:
     except subprocess.CalledProcessError as exc:
         joined = " ".join(command)
         raise ServiceError(f"Command failed ({exc.returncode}): {joined}") from exc
+
+
+def _wait_for_caddy_health(admin_url: str, timeout_seconds: float) -> None:
+    deadline = time.monotonic() + timeout_seconds
+
+    while time.monotonic() < deadline:
+        try:
+            with CaddyAdminClient(admin_url) as client:
+                client.healthcheck()
+                return
+        except CaddyAPIError:
+            time.sleep(0.2)
+
+    raise ServiceError(f"Caddy did not become healthy at {admin_url} within {timeout_seconds}s")
+
+
+def _wait_for_caddy_stop(admin_url: str, timeout_seconds: float) -> None:
+    deadline = time.monotonic() + timeout_seconds
+
+    while time.monotonic() < deadline:
+        try:
+            with CaddyAdminClient(admin_url) as client:
+                client.healthcheck()
+        except CaddyAPIError:
+            return
+        time.sleep(0.2)
+
+    raise ServiceError(f"Caddy is still responding at {admin_url} after {timeout_seconds}s")
+
+
+def _cleanup_pid_file(paths: ProjectPaths) -> None:
+    if paths.caddy_pid_file.exists():
+        paths.caddy_pid_file.unlink()
+
+
+def _admin_api_address(admin_url: str) -> str:
+    parsed = urlparse(admin_url)
+
+    if parsed.hostname is None:
+        raise ServiceError(f"Invalid caddy admin_url (expected http[s]://host:port): {admin_url}")
+
+    if parsed.port is not None:
+        port = parsed.port
+    elif parsed.scheme == "https":
+        port = 443
+    else:
+        port = 80
+
+    try:
+        ip = ipaddress.ip_address(parsed.hostname)
+        host = f"[{parsed.hostname}]" if ip.version == 6 else parsed.hostname
+    except ValueError:
+        host = parsed.hostname
+
+    return f"{host}:{port}"
