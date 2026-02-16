@@ -112,6 +112,10 @@ def start_caddy(paths: ProjectPaths | None = None) -> dict:
             "already_running": True,
         }
 
+    # Fresh boot: clear stale active-service state from previous crashed sessions.
+    with locked_active_services(resolved_paths) as active_services:
+        active_services.clear()
+
     resolved_paths.data_dir.mkdir(parents=True, exist_ok=True)
     command = [
         "caddy",
