@@ -5,20 +5,12 @@ from pathlib import Path
 import os
 from typing import Mapping
 
-from dotenv import dotenv_values
-
 
 @dataclass(frozen=True)
 class ProjectPaths:
     root: Path
-    env_file: Path
-    routes_file: Path
-    data_dir: Path
-    state_file: Path
-    state_lock_file: Path
-    caddy_pid_file: Path
+    services_file: Path
     layout_file: Path
-    bootstrap_config_file: Path
 
 
 def project_root() -> Path:
@@ -30,32 +22,11 @@ def project_root() -> Path:
 
 def get_paths(root: Path | None = None) -> ProjectPaths:
     root_path = (root or project_root()).resolve()
-    data_dir = root_path / "data"
     return ProjectPaths(
         root=root_path,
-        env_file=root_path / "config.env",
-        routes_file=root_path / "routes.toml",
-        data_dir=data_dir,
-        state_file=data_dir / "active_services.json",
-        state_lock_file=data_dir / ".active_services.lock",
-        caddy_pid_file=data_dir / "caddy.pid",
+        services_file=root_path / "services.toml",
         layout_file=root_path / "layouts" / "caddy.kdl",
-        bootstrap_config_file=root_path / "config" / "caddy-bootstrap.json",
     )
-
-
-def load_env(env_file: Path | None = None) -> dict[str, str]:
-    source = env_file or get_paths().env_file
-    loaded: dict[str, str] = {}
-
-    if source.exists():
-        for key, value in dotenv_values(source).items():
-            if value is not None:
-                loaded[key] = value
-
-    # Process environment wins over file values.
-    loaded.update({k: v for k, v in os.environ.items()})
-    return loaded
 
 
 def require_port(env: Mapping[str, str], key: str) -> int:

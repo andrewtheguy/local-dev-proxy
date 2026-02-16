@@ -12,8 +12,14 @@ layout {
   }
 
   tab name="s3browser" split_direction="vertical" {
-    pane name="caddy" command="./scripts/caddy.py"
-    pane name="minio" command="./scripts/minio.py"
-    pane name="s3browser" command="./scripts/s3browser.py" focus=true
+    pane name="caddy" command="uv" {
+      args "run" "local-dev-proxy" "run" "caddy"
+    }
+    pane name="minio" command="uv" {
+      args "run" "local-dev-proxy" "run" "minio"
+    }
+    pane name="s3browser" command="uv" focus=true {
+      args "run" "local-dev-proxy" "run" "s3browser"
+    }
   }
 }

@@ -1,4 +1,4 @@
-This repo manages a detached Caddy reverse proxy plus zellij-managed local services for MinIO and s3browser.
+Local dev proxy: Caddy reverse proxy + zellij-managed services for MinIO and s3browser.
 
 ## What you get
 
@@ -12,109 +12,55 @@ This repo manages a detached Caddy reverse proxy plus zellij-managed local servi
 
 - `uv`
 - `caddy`
-- `zellij` (tested with 0.43.x)
+- `zellij`
 - `minio`
 - `s3browser`
 
-Install on macOS:
-```sh
-brew install caddy uv zellij
-# MinIO and s3browser are expected on PATH
-```
-
 ## Configuration
 
-Service ports live in `/Users/it3/codes/andrew/zellij-test/config.env`:
-```env
-MINIO_PORT=19000
-MINIO_CONSOLE_PORT=19001
-S3BROWSER_PORT=18170
-WEED_S3_PORT=18333
-```
+Everything lives in `services.toml`: caddy settings, port assignments (`[env]`), service commands, and routes.
 
-Routing config is centralized in `/Users/it3/codes/andrew/zellij-test/routes.toml`.
+## Usage
 
-## Start and stop
-
-1. Install Python dependencies:
 ```sh
 uv sync
-```
-
-2. Start zellij session:
-```sh
 uv run local-dev-proxy session up
 ```
 
-This launches three panes:
-- `caddy` (`./scripts/caddy.py`)
-- `minio` (`./scripts/minio.py`)
-- `s3browser` (`./scripts/s3browser.py`)
+This launches a zellij session with panes for caddy, minio, and s3browser. Each service syncs its routes to Caddy automatically on startup.
 
-Each service pane starts the process and syncs Caddy routes automatically.
+Re-running `session up` reattaches if the session is still active, or creates a new one if it exited.
 
-4. To stop Caddy:
-- If running in zellij pane, close the pane/session.
-- If running detached via `caddy start`, run:
-```sh
-uv run local-dev-proxy caddy stop
-```
+## How to add a service
 
-## Route lifecycle
-
-Routes are managed programmatically through Caddy Admin API (`127.0.0.1:2020`).
-
-- Starting `minio` activates both `minio` and `minioconsole` routes.
-- Starting `s3browser` activates `s3browser` route.
-- Stopping a service deactivates its route(s).
-- A fallback route always remains and returns `Not Found caddy` with `404`.
-
-## CLI reference
-
-```sh
-# detached caddy lifecycle
-uv run local-dev-proxy caddy start
-uv run local-dev-proxy caddy stop
-uv run local-dev-proxy caddy restart
-uv run local-dev-proxy caddy status
-
-# run service process in foreground
-uv run local-dev-proxy service minio
-uv run local-dev-proxy service s3browser
-uv run local-dev-proxy service weed
-
-# caddy route controls
-uv run local-dev-proxy caddy sync
-
-# zellij launcher
-uv run local-dev-proxy session up
-```
-
-## Add or change routes
-
-Edit `/Users/it3/codes/andrew/zellij-test/routes.toml`:
+1. Add a section to `services.toml`:
 
 ```toml
 [services.myservice]
+command = ["myservice", "--port", "{MYSERVICE_PORT}"]
+
+[[services.myservice.routes]]
+id = "myservice"
 hosts = ["myservice.localhost"]
 target_port_env = "MYSERVICE_PORT"
-# optional
-# target_host = "127.0.0.1"
-# enabled = true
 ```
 
-Then set `MYSERVICE_PORT` in `/Users/it3/codes/andrew/zellij-test/config.env` and call:
+2. Add the port to the `[env]` table in `services.toml`:
 
-```sh
-uv run local-dev-proxy caddy sync
+```toml
+[env]
+MYSERVICE_PORT = "18200"
+```
+
+3. Add a pane in `layouts/caddy.kdl`:
+
+```kdl
+pane name="myservice" command="uv" {
+  args "run" "local-dev-proxy" "run" "myservice"
+}
 ```
 
 ## Troubleshooting
 
-- `uv run local-dev-proxy caddy status` fails with admin API error:
-  - Ensure Caddy is running: `uv run local-dev-proxy caddy start`
-  - Restart cleanly: `uv run local-dev-proxy caddy restart`
-- Service starts but URL does not proxy:
-  - Confirm service process is alive in zellij pane.
-  - Confirm corresponding `*_PORT` is set in `config.env`.
-  - Run `uv run local-dev-proxy caddy sync` to reconcile state and routes.
+- **Service URL not proxying:** confirm the service process is alive in its zellij pane and the port is set in `services.toml`.
+- **Caddy not responding:** check the caddy pane for errors. It must be running before other services can sync routes.

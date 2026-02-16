@@ -4,53 +4,62 @@ from pathlib import Path
 
 import pytest
 
-from local_dev_proxy.routes import build_routes, load_routes
+from local_dev_proxy.routes import build_routes, load_routes, resolve_command
 
 
-ROUTES_TOML = """
+SERVICES_TOML = """
+[env]
+MINIO_PORT = "19000"
+MINIO_CONSOLE_PORT = "19001"
+S3BROWSER_PORT = "18170"
+
 [caddy]
 admin_url = "http://127.0.0.1:2019"
 http_port = 2800
 bind = ["127.0.0.1", "::1"]
 
+[services.caddy]
+command = ["caddy", "run", "--config", "config/caddy-bootstrap.json"]
+
 [services.minio]
+command = ["minio", "server", "data", "--address", ":{MINIO_PORT}"]
+env = {MINIO_BROWSER_REDIRECT = "off"}
+
+[[services.minio.routes]]
+id = "minio"
 hosts = ["minios3.localhost", "*.minios3.localhost"]
 target_port_env = "MINIO_PORT"
 
-[services.s3browser]
-hosts = ["s3browser.localhost"]
-target_port_env = "S3BROWSER_PORT"
-
-[services.minioconsole]
+[[services.minio.routes]]
+id = "minioconsole"
 hosts = ["minioconsole.localhost"]
 target_port_env = "MINIO_CONSOLE_PORT"
+
+[services.s3browser]
+command = ["s3browser", "-b", "127.0.0.1:{S3BROWSER_PORT}"]
+
+[[services.s3browser.routes]]
+id = "s3browser"
+hosts = ["s3browser.localhost"]
+target_port_env = "S3BROWSER_PORT"
 """
 
 
 def _write_manifest(tmp_path: Path) -> Path:
-    manifest = tmp_path / "routes.toml"
-    manifest.write_text(ROUTES_TOML)
+    manifest = tmp_path / "services.toml"
+    manifest.write_text(SERVICES_TOML)
     return manifest
 
 
 def test_build_routes_is_deterministic_and_ports_are_resolved(tmp_path: Path) -> None:
     manifest = load_routes(_write_manifest(tmp_path))
-    env = {
-        "S3BROWSER_PORT": "18170",
-        "MINIO_PORT": "19000",
-        "MINIO_CONSOLE_PORT": "19001",
-    }
 
-    routes = build_routes(
-        manifest,
-        env,
-        active_services={"minioconsole", "s3browser", "minio"},
-    )
+    routes = build_routes(manifest, manifest.env)
 
     assert [route.get("@id") for route in routes] == [
-        "route-s3browser",
         "route-minio",
         "route-minioconsole",
+        "route-s3browser",
         "route-fallback",
     ]
 
@@ -69,10 +78,46 @@ def test_build_routes_is_deterministic_and_ports_are_resolved(tmp_path: Path) ->
 def test_build_routes_raises_when_required_port_is_missing(tmp_path: Path) -> None:
     manifest = load_routes(_write_manifest(tmp_path))
 
-    with pytest.raises(ValueError, match="S3BROWSER_PORT"):
-        build_routes(manifest, env={}, active_services={"s3browser"})
+    with pytest.raises(ValueError, match="MINIO_PORT"):
+        build_routes(manifest, env={})
 
 
 def test_listen_addresses_include_ipv6_brackets(tmp_path: Path) -> None:
     manifest = load_routes(_write_manifest(tmp_path))
     assert manifest.caddy.listen_addresses() == ["127.0.0.1:2800", "[::1]:2800"]
+
+
+def test_resolve_command_replaces_placeholders() -> None:
+    command = ["minio", "server", "--address", ":{MINIO_PORT}"]
+    env = {"MINIO_PORT": "19000"}
+    assert resolve_command(command, env) == ["minio", "server", "--address", ":19000"]
+
+
+def test_resolve_command_raises_on_missing_var() -> None:
+    command = ["s3browser", "-b", "127.0.0.1:{S3BROWSER_PORT}"]
+    with pytest.raises(ValueError, match="S3BROWSER_PORT"):
+        resolve_command(command, env={})
+
+
+def test_service_def_fields(tmp_path: Path) -> None:
+    manifest = load_routes(_write_manifest(tmp_path))
+
+    caddy_svc = manifest.services["caddy"]
+    assert caddy_svc.command == ["caddy", "run", "--config", "config/caddy-bootstrap.json"]
+    assert caddy_svc.routes == []
+    assert caddy_svc.env == {}
+
+    minio_svc = manifest.services["minio"]
+    assert minio_svc.env == {"MINIO_BROWSER_REDIRECT": "off"}
+    assert len(minio_svc.routes) == 2
+    assert minio_svc.routes[0].id == "minio"
+    assert minio_svc.routes[1].id == "minioconsole"
+
+
+def test_manifest_env_parsed(tmp_path: Path) -> None:
+    manifest = load_routes(_write_manifest(tmp_path))
+    assert manifest.env == {
+        "MINIO_PORT": "19000",
+        "MINIO_CONSOLE_PORT": "19001",
+        "S3BROWSER_PORT": "18170",
+    }

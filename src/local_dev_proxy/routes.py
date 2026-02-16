@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import ipaddress
 from pathlib import Path
+import re
 import tomllib
-from typing import Iterable, Mapping
+from typing import Mapping
 
 from .config import require_port
 
@@ -38,27 +39,37 @@ class CaddySettings:
 
 @dataclass(frozen=True)
 class ServiceRoute:
-    name: str
+    id: str
     hosts: tuple[str, ...]
     target_host: str
     target_port_env: str
-    enabled: bool
+
+
+@dataclass(frozen=True)
+class ServiceDef:
+    name: str
+    command: list[str]
+    env: dict[str, str] = field(default_factory=dict)
+    routes: list[ServiceRoute] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
 class RoutesManifest:
+    env: dict[str, str]
     caddy: CaddySettings
-    services: dict[str, ServiceRoute]
-
-
-DEFAULT_ORDER = ("s3browser", "minio", "minioconsole")
+    services: dict[str, ServiceDef]
 
 
 def load_routes(path: Path) -> RoutesManifest:
     if not path.exists():
-        raise RouteConfigError(f"Routes manifest not found: {path}")
+        raise RouteConfigError(f"Services manifest not found: {path}")
 
     data = tomllib.loads(path.read_text())
+
+    env_data = data.get("env", {})
+    if not isinstance(env_data, dict):
+        raise RouteConfigError("[env] must be a table")
+    manifest_env = {str(k): str(v) for k, v in env_data.items()}
 
     caddy_data = data.get("caddy", {})
     if not isinstance(caddy_data, dict):
@@ -76,62 +87,107 @@ def load_routes(path: Path) -> RoutesManifest:
     if not isinstance(services_data, dict) or not services_data:
         raise RouteConfigError("[services] must contain at least one service")
 
-    services: dict[str, ServiceRoute] = {}
+    services: dict[str, ServiceDef] = {}
     for name, raw in services_data.items():
         if not isinstance(raw, dict):
             raise RouteConfigError(f"services.{name} must be a table")
 
-        hosts = raw.get("hosts")
-        if not isinstance(hosts, list) or not hosts:
-            raise RouteConfigError(f"services.{name}.hosts must be a non-empty list")
+        command = raw.get("command")
+        if not isinstance(command, list) or not command:
+            raise RouteConfigError(f"services.{name}.command must be a non-empty list")
 
-        target_port_env = raw.get("target_port_env")
-        if not isinstance(target_port_env, str) or not target_port_env:
-            raise RouteConfigError(
-                f"services.{name}.target_port_env must be a non-empty string"
+        env = raw.get("env", {})
+        if not isinstance(env, dict):
+            raise RouteConfigError(f"services.{name}.env must be a table")
+
+        raw_routes = raw.get("routes", [])
+        if not isinstance(raw_routes, list):
+            raise RouteConfigError(f"services.{name}.routes must be an array")
+
+        routes: list[ServiceRoute] = []
+        for i, route_raw in enumerate(raw_routes):
+            if not isinstance(route_raw, dict):
+                raise RouteConfigError(f"services.{name}.routes[{i}] must be a table")
+
+            route_id = route_raw.get("id")
+            if not isinstance(route_id, str) or not route_id:
+                raise RouteConfigError(
+                    f"services.{name}.routes[{i}].id must be a non-empty string"
+                )
+
+            hosts = route_raw.get("hosts")
+            if not isinstance(hosts, list) or not hosts:
+                raise RouteConfigError(
+                    f"services.{name}.routes[{i}].hosts must be a non-empty list"
+                )
+
+            target_port_env = route_raw.get("target_port_env")
+            if not isinstance(target_port_env, str) or not target_port_env:
+                raise RouteConfigError(
+                    f"services.{name}.routes[{i}].target_port_env must be a non-empty string"
+                )
+
+            target_host = str(route_raw.get("target_host", "127.0.0.1"))
+
+            routes.append(
+                ServiceRoute(
+                    id=route_id,
+                    hosts=tuple(str(h) for h in hosts),
+                    target_host=target_host,
+                    target_port_env=target_port_env,
+                )
             )
 
-        target_host = str(raw.get("target_host", "127.0.0.1"))
-        enabled = bool(raw.get("enabled", True))
-
-        services[name] = ServiceRoute(
+        services[name] = ServiceDef(
             name=str(name),
-            hosts=tuple(str(host) for host in hosts),
-            target_host=target_host,
-            target_port_env=target_port_env,
-            enabled=enabled,
+            command=[str(c) for c in command],
+            env={str(k): str(v) for k, v in env.items()},
+            routes=routes,
         )
 
     return RoutesManifest(
+        env=manifest_env,
         caddy=CaddySettings(admin_url=admin_url, http_port=http_port, bind=bind_hosts),
         services=services,
     )
 
 
-def build_routes(
-    manifest: RoutesManifest,
-    env: Mapping[str, str],
-    active_services: Iterable[str],
-) -> list[dict]:
-    active = set(active_services)
-    ordered = _ordered_services(manifest, active)
+def resolve_command(command: list[str], env: Mapping[str, str]) -> list[str]:
+    """Replace {VAR} placeholders in command args with values from env."""
 
+    def _substitute(arg: str) -> str:
+        def replacer(match: re.Match[str]) -> str:
+            key = match.group(1)
+            value = env.get(key)
+            if value is None:
+                raise ValueError(f"Missing env variable for command placeholder: {key}")
+            return value
+
+        return re.sub(r"\{([A-Z_][A-Z0-9_]*)\}", replacer, arg)
+
+    return [_substitute(arg) for arg in command]
+
+
+def build_routes(manifest: RoutesManifest, env: Mapping[str, str]) -> list[dict]:
     routes: list[dict] = []
-    for service in ordered:
-        target_port = require_port(env, service.target_port_env)
-        routes.append(
-            {
-                "@id": f"route-{service.name}",
-                "match": [{"host": list(service.hosts)}],
-                "handle": [
-                    {
-                        "handler": "reverse_proxy",
-                        "upstreams": [{"dial": f"{service.target_host}:{target_port}"}],
-                    }
-                ],
-                "terminal": True,
-            }
-        )
+    for service in manifest.services.values():
+        for route in service.routes:
+            target_port = require_port(env, route.target_port_env)
+            routes.append(
+                {
+                    "@id": f"route-{route.id}",
+                    "match": [{"host": list(route.hosts)}],
+                    "handle": [
+                        {
+                            "handler": "reverse_proxy",
+                            "upstreams": [
+                                {"dial": f"{route.target_host}:{target_port}"}
+                            ],
+                        }
+                    ],
+                    "terminal": True,
+                }
+            )
 
     routes.append(build_fallback_route())
     return routes
@@ -149,21 +205,6 @@ def build_fallback_route() -> dict:
         ],
         "terminal": True,
     }
-
-
-def _ordered_services(manifest: RoutesManifest, active: set[str]) -> list[ServiceRoute]:
-    priority = {name: index for index, name in enumerate(DEFAULT_ORDER)}
-
-    candidates = [
-        service
-        for service in manifest.services.values()
-        if service.enabled and service.name in active
-    ]
-
-    return sorted(
-        candidates,
-        key=lambda service: (priority.get(service.name, len(priority)), service.name),
-    )
 
 
 def _parse_int(value: object, field_name: str) -> int:
