@@ -87,15 +87,16 @@ class CaddyAdminClient:
             raise CaddyAPIError(f"Unable to reach Caddy admin API at {self.admin_url}: {exc}") from exc
 
     def _replace_config_key(self, path: str, payload: Any, context: str) -> None:
-        response = self._request("PUT", path, json=payload)
+        # PATCH replaces an existing key; PUT creates a new one.
+        response = self._request("PATCH", path, json=payload)
         if 200 <= response.status_code < 300:
             return
 
-        if response.status_code == 409 and "key already exists" in response.text:
-            delete_response = self._request("DELETE", path)
-            self._ensure_success(delete_response, f"{context} (delete existing key)")
-            response = self._request("PUT", path, json=payload)
+        if response.status_code != 404:
+            self._ensure_success(response, context)
 
+        # Key doesn't exist yet — create it with PUT.
+        response = self._request("PUT", path, json=payload)
         self._ensure_success(response, context)
 
     @staticmethod

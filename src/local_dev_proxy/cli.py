@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import typer
 
+from .config import get_paths
+from .routes import load_routes
 from .services import ServiceError, run_service, run_session_up
 
 
@@ -23,6 +25,17 @@ def run_command(
         raise typer.Exit(code=1) from exc
 
     raise typer.Exit(code=return_code)
+
+
+@app.command("routes")
+def routes_command() -> None:
+    """Show service URLs."""
+    paths = get_paths()
+    manifest = load_routes(paths.services_file)
+    for service in manifest.services.values():
+        for route in service.routes:
+            for host in route.hosts:
+                typer.echo(f"{route.id:20s} http://{host}:{manifest.caddy.http_port}/")
 
 
 @session_app.command("up")
