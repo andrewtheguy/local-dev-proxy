@@ -121,7 +121,7 @@ def start_caddy(paths: ProjectPaths | None = None) -> dict:
         "--pidfile",
         str(resolved_paths.caddy_pid_file),
     ]
-    _run_command(command, cwd=resolved_paths.root)
+    _run_command(command, cwd=resolved_paths.root, quiet=True)
     _wait_for_caddy_health(manifest.caddy.admin_url, timeout_seconds=5.0)
 
     return {
@@ -146,7 +146,11 @@ def stop_caddy(paths: ProjectPaths | None = None) -> dict:
         }
 
     address = _admin_api_address(manifest.caddy.admin_url)
-    _run_command(["caddy", "stop", "--address", address], cwd=resolved_paths.root)
+    _run_command(
+        ["caddy", "stop", "--address", address],
+        cwd=resolved_paths.root,
+        quiet=True,
+    )
     _wait_for_caddy_stop(manifest.caddy.admin_url, timeout_seconds=5.0)
     _cleanup_pid_file(resolved_paths)
 
@@ -182,6 +186,12 @@ def run_named_service(service_name: str, paths: ProjectPaths | None = None) -> i
 
     should_register_routes = bool(SERVICE_ROUTE_KEYS.get(normalized_name))
     if should_register_routes:
+        # In zellij, caddy may be starting in a separate pane; wait briefly first.
+        manifest, _ = _load_manifest_and_env(resolved_paths)
+        try:
+            _wait_for_caddy_health(manifest.caddy.admin_url, timeout_seconds=5.0)
+        except ServiceError:
+            start_caddy(resolved_paths)
         activate_service(normalized_name, resolved_paths)
 
     try:
@@ -198,9 +208,6 @@ def run_session_up(paths: ProjectPaths | None = None, session_name: str = "caddy
     if not resolved_paths.layout_file.exists():
         raise ServiceError(f"Missing zellij layout file: {resolved_paths.layout_file}")
 
-    # Ensure detached proxy is available before service panes attempt route sync.
-    start_caddy(resolved_paths)
-
     session_info = _find_session_line(session_name)
 
     if session_info:
@@ -216,6 +223,22 @@ def run_session_up(paths: ProjectPaths | None = None, session_name: str = "caddy
         check=False,
         cwd=resolved_paths.root,
     ).returncode
+
+
+def run_caddy_foreground(paths: ProjectPaths | None = None) -> int:
+    resolved_paths = paths or get_paths()
+    if not resolved_paths.bootstrap_config_file.exists():
+        raise ServiceError(f"Missing bootstrap config: {resolved_paths.bootstrap_config_file}")
+
+    runtime_env = os.environ.copy()
+    runtime_env.update(load_env(resolved_paths.env_file))
+    command = [
+        "caddy",
+        "run",
+        "--config",
+        str(resolved_paths.bootstrap_config_file),
+    ]
+    return _run_process(command, runtime_env, resolved_paths.root)
 
 
 def _service_command(service_name: str, paths: ProjectPaths) -> tuple[list[str], dict[str, str]]:
@@ -362,9 +385,17 @@ def _find_session_line(session_name: str) -> str | None:
     return None
 
 
-def _run_command(command: list[str], cwd: Path) -> None:
+def _run_command(command: list[str], cwd: Path, quiet: bool = False) -> None:
+    run_kwargs: dict[str, object] = {
+        "check": True,
+        "cwd": cwd,
+    }
+    if quiet:
+        run_kwargs["stdout"] = subprocess.DEVNULL
+        run_kwargs["stderr"] = subprocess.DEVNULL
+
     try:
-        subprocess.run(command, check=True, cwd=cwd)
+        subprocess.run(command, **run_kwargs)
     except FileNotFoundError as exc:
         raise ServiceError(f"Command not found: {command[0]}") from exc
     except subprocess.CalledProcessError as exc:

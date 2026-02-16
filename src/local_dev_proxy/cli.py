@@ -6,9 +6,7 @@ import typer
 
 from .services import (
     ServiceError,
-    activate_service,
     caddy_status,
-    deactivate_service,
     restart_caddy,
     run_named_service,
     run_session_up,
@@ -19,7 +17,7 @@ from .services import (
 
 
 app = typer.Typer(help="Local dev proxy orchestration CLI")
-caddy_app = typer.Typer(help="Caddy Admin API controls")
+caddy_app = typer.Typer(help="Caddy controls")
 session_app = typer.Typer(help="Zellij session controls")
 
 app.add_typer(caddy_app, name="caddy")
@@ -38,40 +36,6 @@ def service_command(
         raise typer.Exit(code=1) from exc
 
     raise typer.Exit(code=return_code)
-
-
-@caddy_app.command("activate")
-def caddy_activate(service_name: str) -> None:
-    """Activate routing for a service and sync Caddy."""
-    try:
-        active = activate_service(service_name)
-    except ServiceError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    typer.echo(
-        json.dumps(
-            {"active_services": active},
-            indent=2,
-        )
-    )
-
-
-@caddy_app.command("deactivate")
-def caddy_deactivate(service_name: str) -> None:
-    """Deactivate routing for a service and sync Caddy."""
-    try:
-        active = deactivate_service(service_name)
-    except ServiceError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    typer.echo(
-        json.dumps(
-            {"active_services": active},
-            indent=2,
-        )
-    )
 
 
 @caddy_app.command("sync")

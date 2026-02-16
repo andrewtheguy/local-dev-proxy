@@ -4,12 +4,12 @@
   },
   "apps": {
     "http": {
-      "http_port": 2810,
+      "http_port": 2800,
       "servers": {
         "srv0": {
           "listen": [
-            "127.0.0.1:2810",
-            "[::1]:2810"
+            "127.0.0.1:2800",
+            "[::1]:2800"
           ],
           "automatic_https": {
             "disable": true

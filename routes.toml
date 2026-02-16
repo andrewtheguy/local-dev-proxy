@@ -1,6 +1,6 @@
 [caddy]
 admin_url = "http://127.0.0.1:2020"
-http_port = 2810
+http_port = 2800
 bind = ["127.0.0.1", "::1"]
 
 [services.s3browser]

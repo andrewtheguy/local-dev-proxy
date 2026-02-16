@@ -4,9 +4,9 @@ This repo manages a detached Caddy reverse proxy plus zellij-managed local servi
 
 | URL | Service |
 |-----|---------|
-| `http://s3browser.localhost:2810` | s3browser UI |
-| `http://minios3.localhost:2810` | MinIO S3 API |
-| `http://minioconsole.localhost:2810` | MinIO Console |
+| `http://s3browser.localhost:2800` | s3browser UI |
+| `http://minios3.localhost:2800` | MinIO S3 API |
+| `http://minioconsole.localhost:2800` | MinIO Console |
 
 ## Prerequisites
 
@@ -41,18 +41,21 @@ Routing config is centralized in `/Users/it3/codes/andrew/zellij-test/routes.tom
 uv sync
 ```
 
-2. Start zellij session for app services:
+2. Start zellij session:
 ```sh
 uv run local-dev-proxy session up
 ```
 
-`session up` automatically starts detached Caddy if it is not already running.
+This launches three panes:
+- `caddy` (`./scripts/caddy.py`)
+- `minio` (`./scripts/minio.py`)
+- `s3browser` (`./scripts/s3browser.py`)
 
-This opens two panes:
-- `minio`
-- `s3browser`
+Each service pane starts the process and syncs Caddy routes automatically.
 
-3. Stop detached Caddy when done:
+4. To stop Caddy:
+- If running in zellij pane, close the pane/session.
+- If running detached via `caddy start`, run:
 ```sh
 uv run local-dev-proxy caddy stop
 ```
@@ -81,8 +84,6 @@ uv run local-dev-proxy service s3browser
 uv run local-dev-proxy service weed
 
 # caddy route controls
-uv run local-dev-proxy caddy activate minio
-uv run local-dev-proxy caddy deactivate minio
 uv run local-dev-proxy caddy sync
 
 # zellij launcher
