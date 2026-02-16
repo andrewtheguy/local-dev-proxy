@@ -2,27 +2,13 @@ class LocalDevProxy < Formula
   desc "Detached local-dev Caddy service with Python orchestration CLI"
   homepage "https://github.com/andrewtheguy/zellij-test"
   license "MIT"
-  head "https://github.com/andrewtheguy/zellij-test.git", branch: "main"
+  repo_root = Pathname.new(__FILE__).realpath.dirname.parent
+  head "file://#{repo_root}", branch: "main", using: :git
 
   depends_on "caddy"
-  depends_on "uv"
 
   def install
-    pkgshare.install "pyproject.toml"
-    pkgshare.install "README.md"
-    pkgshare.install "config.env"
-    pkgshare.install "routes.toml"
-    pkgshare.install "config"
-    pkgshare.install "layouts"
-    pkgshare.install "scripts"
-    pkgshare.install "src"
-
-    (bin/"local-dev-proxy").write <<~EOS
-      #!/usr/bin/env bash
-      set -euo pipefail
-      export LOCAL_DEV_PROXY_ROOT="#{opt_pkgshare}"
-      exec "#{Formula["uv"].opt_bin}/uv" run --project "#{opt_pkgshare}" local-dev-proxy "$@"
-    EOS
+    pkgshare.install "config/caddy-bootstrap.json"
   end
 
   service do
@@ -43,16 +29,16 @@ class LocalDevProxy < Formula
 
   def caveats
     <<~EOS
-      Before starting this service, stop upstream caddy to avoid port conflicts:
-        brew services stop caddy
-
       Start detached proxy:
         brew services start local-dev-proxy
+
+      This service uses dedicated ports:
+        HTTP: 2810
+        Admin API: 2020
     EOS
   end
 
   test do
     assert_predicate(opt_pkgshare/"config/caddy-bootstrap.json", :exist?)
-    assert_predicate(opt_pkgshare/"routes.toml", :exist?)
   end
 end

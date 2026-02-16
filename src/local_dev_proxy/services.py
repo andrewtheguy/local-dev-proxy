@@ -267,12 +267,15 @@ def _resolve_route_keys(service_name: str, manifest: RoutesManifest) -> set[str]
 
 
 def _find_session_line(session_name: str) -> str | None:
-    result = subprocess.run(
-        ["zellij", "list-sessions", "-n"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            ["zellij", "list-sessions", "-n"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        raise ServiceError("Command not found: zellij") from exc
 
     if result.returncode != 0:
         return None

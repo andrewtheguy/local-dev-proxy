@@ -4,9 +4,9 @@ This repo manages a detached Caddy reverse proxy plus zellij-managed local servi
 
 | URL | Service |
 |-----|---------|
-| `http://s3browser.localhost:2800` | s3browser UI |
-| `http://minios3.localhost:2800` | MinIO S3 API |
-| `http://minioconsole.localhost:2800` | MinIO Console |
+| `http://s3browser.localhost:2810` | s3browser UI |
+| `http://minios3.localhost:2810` | MinIO S3 API |
+| `http://minioconsole.localhost:2810` | MinIO Console |
 
 ## Prerequisites
 
@@ -37,27 +37,34 @@ Routing config is centralized in `/Users/it3/codes/andrew/zellij-test/routes.tom
 
 ## Install and start
 
-1. Stop upstream Caddy service to avoid conflicts:
+1. Create a local tap once:
 ```sh
-brew services stop caddy
+brew tap-new andrew/local-dev-proxy
 ```
 
-2. Install custom formula from this repo:
+2. Symlink the repo formula into the tap:
 ```sh
-brew install --HEAD /Users/it3/codes/andrew/zellij-test/Formula/local-dev-proxy.rb
+ln -sf /Users/it3/codes/andrew/zellij-test/Formula/local-dev-proxy.rb \
+  /opt/homebrew/Library/Taps/andrew/homebrew-local-dev-proxy/Formula/local-dev-proxy.rb
 ```
 
-3. Start detached Caddy service:
+3. Install custom formula from this repo:
+```sh
+brew install --HEAD andrew/local-dev-proxy/local-dev-proxy
+```
+If you change this repo, commit updates before reinstalling so Homebrew can read the latest `main` branch state.
+
+4. Start detached Caddy service:
 ```sh
 brew services start local-dev-proxy
 ```
 
-4. Sync Python environment:
+5. Sync Python environment:
 ```sh
 uv sync
 ```
 
-5. Start zellij session for services:
+6. Start zellij session for services:
 ```sh
 uv run local-dev-proxy session up
 ```
@@ -70,7 +77,7 @@ Caddy stays detached and keeps running when zellij exits.
 
 ## Route lifecycle
 
-Routes are managed programmatically through Caddy Admin API (`127.0.0.1:2019`).
+Routes are managed programmatically through Caddy Admin API (`127.0.0.1:2020`).
 
 - Starting `minio` activates both `minio` and `minioconsole` routes.
 - Starting `s3browser` activates `s3browser` route.
