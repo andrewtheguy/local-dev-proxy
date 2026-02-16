@@ -173,6 +173,87 @@ target_port = 3000
     assert routes[0]["handle"][0]["upstreams"][0]["dial"] == "127.0.0.1:3000"
 
 
+def test_unmanaged_service_parses(tmp_path: Path) -> None:
+    toml = """
+[caddy]
+admin_url = "http://127.0.0.1:24019"
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.external]
+env = {APP_PORT = "3000"}
+
+[[services.external.routes]]
+id = "external"
+hosts = ["external.localhost"]
+target_port_env = "APP_PORT"
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+    manifest = load_routes(path)
+
+    svc = manifest.services["external"]
+    assert svc.command is None
+    assert svc.env == {"APP_PORT": "3000"}
+    assert len(svc.routes) == 1
+    assert svc.routes[0].id == "external"
+
+
+def test_build_routes_includes_unmanaged_service(tmp_path: Path) -> None:
+    toml = """
+[caddy]
+admin_url = "http://127.0.0.1:24019"
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.managed]
+command = ["serve"]
+
+[[services.managed.routes]]
+id = "managed"
+hosts = ["managed.localhost"]
+target_port = 4000
+
+[services.unmanaged]
+env = {APP_PORT = "5000"}
+
+[[services.unmanaged.routes]]
+id = "unmanaged"
+hosts = ["unmanaged.localhost"]
+target_port_env = "APP_PORT"
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+    manifest = load_routes(path)
+
+    routes = build_routes(manifest)
+    ids = [r.get("@id") for r in routes]
+    assert "route-managed" in ids
+    assert "route-unmanaged" in ids
+    assert "route-fallback" in ids
+
+
+def test_command_empty_list_rejected(tmp_path: Path) -> None:
+    toml = """
+[caddy]
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.bad]
+command = []
+
+[[services.bad.routes]]
+id = "bad"
+hosts = ["bad.localhost"]
+target_port = 3000
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+
+    with pytest.raises(RouteConfigError, match="services.bad.command must be a non-empty list"):
+        load_routes(path)
+
+
 def test_target_port_rejects_both(tmp_path: Path) -> None:
     toml = """
 [caddy]

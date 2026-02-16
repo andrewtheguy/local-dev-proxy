@@ -49,7 +49,7 @@ class ServiceRoute:
 @dataclass(frozen=True)
 class ServiceDef:
     name: str
-    command: list[str]
+    command: list[str] | None = None
     env: dict[str, str] = field(default_factory=dict)
     routes: list[ServiceRoute] = field(default_factory=list)
 
@@ -70,7 +70,7 @@ def load_routes(path: Path) -> RoutesManifest:
     if not isinstance(caddy_data, dict):
         raise RouteConfigError("[caddy] must be a table")
 
-    admin_url = str(caddy_data.get("admin_url", "http://127.0.0.1:2019"))
+    admin_url = str(caddy_data.get("admin_url", "http://127.0.0.1:24019"))
     http_port = _parse_int(caddy_data.get("http_port", 2800), "caddy.http_port")
 
     bind = caddy_data.get("bind", ["127.0.0.1", "::1"])
@@ -88,8 +88,9 @@ def load_routes(path: Path) -> RoutesManifest:
             raise RouteConfigError(f"services.{name} must be a table")
 
         command = raw.get("command")
-        if not isinstance(command, list) or not command:
-            raise RouteConfigError(f"services.{name}.command must be a non-empty list")
+        if command is not None:
+            if not isinstance(command, list) or not command:
+                raise RouteConfigError(f"services.{name}.command must be a non-empty list")
 
         env = raw.get("env", {})
         if not isinstance(env, dict):
@@ -154,7 +155,7 @@ def load_routes(path: Path) -> RoutesManifest:
 
         services[name] = ServiceDef(
             name=str(name),
-            command=[str(c) for c in command],
+            command=[str(c) for c in command] if command is not None else None,
             env={str(k): str(v) for k, v in env.items()},
             routes=routes,
         )

@@ -1,5 +1,5 @@
 [caddy]
-admin_url = "http://127.0.0.1:2020"
+admin_url = "http://127.0.0.1:24019"
 http_port = 2800
 bind = ["127.0.0.1", "::1"]
 

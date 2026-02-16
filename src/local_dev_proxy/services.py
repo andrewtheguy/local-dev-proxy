@@ -47,6 +47,8 @@ def run_service(name: str, paths: ProjectPaths | None = None) -> int:
     service = manifest.services.get(name)
     if service is None:
         raise ServiceError(f"Unknown service: {name}")
+    if service.command is None:
+        raise ServiceError(f"Service '{name}' has no command (unmanaged service)")
 
     effective_env = {**service.env, **os.environ}
     command = resolve_command(service.command, effective_env)
@@ -59,6 +61,12 @@ def run_service(name: str, paths: ProjectPaths | None = None) -> int:
         _sync_all_routes(resolved_paths, manifest)
 
     return _run_process(command, runtime_env, resolved_paths.root)
+
+
+def sync_all_routes(paths: ProjectPaths | None = None) -> None:
+    resolved_paths = paths or get_paths()
+    manifest = _load_manifest(resolved_paths)
+    _sync_all_routes(resolved_paths, manifest)
 
 
 def _sync_all_routes(paths: ProjectPaths, manifest: RoutesManifest) -> None:

@@ -4,7 +4,7 @@ import typer
 
 from .config import get_paths
 from .routes import load_routes
-from .services import ServiceError, run_service, run_session_up
+from .services import ServiceError, run_service, run_session_up, sync_all_routes
 
 
 app = typer.Typer(help="Local dev proxy orchestration CLI")
@@ -36,6 +36,17 @@ def routes_command() -> None:
         for route in service.routes:
             for host in route.hosts:
                 typer.echo(f"{route.id:20s} http://{host}:{manifest.caddy.http_port}/")
+
+
+@app.command("sync")
+def sync_command() -> None:
+    """Push all routes to the running Caddy instance."""
+    try:
+        sync_all_routes()
+    except ServiceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo("Routes synced successfully.")
 
 
 @session_app.command("up")
