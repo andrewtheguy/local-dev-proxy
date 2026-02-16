@@ -27,17 +27,11 @@ def run_session_up(paths: ProjectPaths | None = None, session_name: str = "caddy
         if "EXITED" in session_info:
             _run_command(["zellij", "delete-session", session_name], cwd=resolved_paths.root)
         else:
-            return subprocess.run(
-                ["zellij", "attach", session_name],
-                check=False,
-                cwd=resolved_paths.root,
-            ).returncode
+            os.chdir(resolved_paths.root)
+            os.execvp("zellij", ["zellij", "attach", session_name])
 
-    return subprocess.run(
-        ["zellij", "-s", session_name, "-n", str(resolved_paths.layout_file)],
-        check=False,
-        cwd=resolved_paths.root,
-    ).returncode
+    os.chdir(resolved_paths.root)
+    os.execvp("zellij", ["zellij", "-s", session_name, "-n", str(resolved_paths.layout_file)])
 
 
 def run_service(name: str, paths: ProjectPaths | None = None) -> int:
