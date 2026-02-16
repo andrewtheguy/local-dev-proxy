@@ -1,4 +1,4 @@
-This repo contains a Zellij layout and Caddy config to run MinIO and s3browser on friendly local hostnames.
+Local dev proxy: Caddy reverse proxy + zellij-managed services for MinIO and s3browser.
 
 ## What you get
 
@@ -8,59 +8,72 @@ This repo contains a Zellij layout and Caddy config to run MinIO and s3browser o
 | `http://minios3.localhost:2800` | MinIO S3 API |
 | `http://minioconsole.localhost:2800` | MinIO Console |
 
-## Prereqs
+## Prerequisites
 
-- `zellij` (tested with 0.43.x)
-- `caddy` v2
-- `minio` server
-- `s3browser` configured to connect to MinIO
-
-Install on macOS:
-```sh
-brew install caddy
-go install github.com/minio/minio@latest
-```
+- `uv`
+- `caddy`
+- `zellij`
+- `minio`
+- `s3browser`
 
 ## Configuration
 
-Ports are configured in `config.env`:
-```
-MINIO_PORT=19000
-MINIO_CONSOLE_PORT=19001
-S3BROWSER_PORT=18170
-```
+Everything lives in `services.toml`: caddy settings, service commands, env/ports, and routes.
 
-## Run (Zellij)
+## Usage
 
 ```sh
-./run-caddy-session.sh
+uv sync
+uv run local-dev-proxy session up
 ```
 
-This starts a Zellij session named `caddy` with the layout. If a previous session exists but is exited, it will be replaced. If the session is already active, you'll be prompted to exit it first.
+This launches a zellij session with panes for caddy, minio, and s3browser. Each service syncs its routes to Caddy automatically on startup.
 
-This opens three panes:
-- `caddy`: reverse proxy
-- `minio`: S3-compatible object storage
-- `s3browser`: web UI
+Re-running `session up` reattaches if the session is still active, or creates a new one if it exited.
 
-## Notes / Troubleshooting
+To list service URLs:
 
-- Caddy listens on port `2800` (see `Caddyfile`). Change `http_port` if already in use.
-- `.localhost` domains resolve to `127.0.0.1` without `/etc/hosts` changes.
-- MinIO default credentials: `minioadmin` / `minioadmin`
-- Data is stored in `data/` (gitignored).
-
-## Adding more services
-
-1. Add port to `config.env`:
-```
-MYSERVICE_PORT=18000
+```sh
+uv run local-dev-proxy routes
 ```
 
-2. Add site block to `Caddyfile`:
-```caddy
-http://myservice.localhost {
-	bind 127.0.0.1 ::1
-	reverse_proxy localhost:{$MYSERVICE_PORT}
+## How to add a service
+
+1. Add a section to `services.toml` (command, port, and route together):
+
+```toml
+[services.myservice]
+command = ["myservice", "--port", "{MYSERVICE_PORT}"]
+env = {MYSERVICE_PORT = "18200"}
+
+[[services.myservice.routes]]
+id = "myservice"
+hosts = ["myservice.localhost"]
+target_port_env = "MYSERVICE_PORT"
+```
+
+If the service has a hard-coded port that isn't configurable, use `target_port` instead:
+
+```toml
+[services.webapp]
+command = ["webapp"]
+
+[[services.webapp.routes]]
+id = "webapp"
+hosts = ["webapp.localhost"]
+target_port = 3000
+```
+
+2. Add a pane in `layouts/caddy.kdl`:
+
+```kdl
+pane name="myservice" command="uv" {
+  args "run" "local-dev-proxy" "run" "myservice"
 }
 ```
+
+## Troubleshooting
+
+- **Service URL not proxying:** confirm the service process is alive in its zellij pane and the port is set in `services.toml`.
+- **Caddy not responding:** check the caddy pane for errors. It must be running before other services can sync routes.
+- **Session attached elsewhere:** to disconnect other clients, press `Ctrl+O` then `W` to open the session manager, then `Ctrl+X` to detach them.
