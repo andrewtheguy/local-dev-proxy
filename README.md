@@ -31,6 +31,12 @@ This launches a zellij session with panes for caddy, minio, and s3browser. Each 
 
 Re-running `session up` reattaches if the session is still active, or creates a new one if it exited.
 
+To list service URLs:
+
+```sh
+uv run local-dev-proxy routes
+```
+
 ## How to add a service
 
 1. Add a section to `services.toml` (command, port, and route together):
