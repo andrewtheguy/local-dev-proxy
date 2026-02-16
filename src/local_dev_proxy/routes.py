@@ -42,7 +42,8 @@ class ServiceRoute:
     id: str
     hosts: tuple[str, ...]
     target_host: str
-    target_port_env: str
+    target_port: int | None = None
+    target_port_env: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,11 +116,29 @@ def load_routes(path: Path) -> RoutesManifest:
                     f"services.{name}.routes[{i}].hosts must be a non-empty list"
                 )
 
-            target_port_env = route_raw.get("target_port_env")
-            if not isinstance(target_port_env, str) or not target_port_env:
+            raw_port = route_raw.get("target_port")
+            raw_port_env = route_raw.get("target_port_env")
+            prefix = f"services.{name}.routes[{i}]"
+
+            if raw_port is not None and raw_port_env is not None:
                 raise RouteConfigError(
-                    f"services.{name}.routes[{i}].target_port_env must be a non-empty string"
+                    f"{prefix}: set target_port or target_port_env, not both"
                 )
+            if raw_port is None and raw_port_env is None:
+                raise RouteConfigError(
+                    f"{prefix}: requires target_port or target_port_env"
+                )
+
+            target_port: int | None = None
+            target_port_env: str | None = None
+            if raw_port is not None:
+                target_port = _parse_int(raw_port, f"{prefix}.target_port")
+            else:
+                if not isinstance(raw_port_env, str) or not raw_port_env:
+                    raise RouteConfigError(
+                        f"{prefix}.target_port_env must be a non-empty string"
+                    )
+                target_port_env = raw_port_env
 
             target_host = str(route_raw.get("target_host", "127.0.0.1"))
 
@@ -128,6 +147,7 @@ def load_routes(path: Path) -> RoutesManifest:
                     id=route_id,
                     hosts=tuple(str(h) for h in hosts),
                     target_host=target_host,
+                    target_port=target_port,
                     target_port_env=target_port_env,
                 )
             )
@@ -172,7 +192,11 @@ def build_routes(
         if env_override:
             effective_env.update(env_override)
         for route in service.routes:
-            port = require_port(effective_env, route.target_port_env)
+            if route.target_port is not None:
+                port = route.target_port
+            else:
+                assert route.target_port_env is not None
+                port = require_port(effective_env, route.target_port_env)
             if port in seen_ports:
                 raise RouteConfigError(
                     f"Port {port} used by both {seen_ports[port]} and {route.id}"

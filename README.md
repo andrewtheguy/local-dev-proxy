@@ -46,6 +46,18 @@ hosts = ["myservice.localhost"]
 target_port_env = "MYSERVICE_PORT"
 ```
 
+If the service has a hard-coded port that isn't configurable, use `target_port` instead:
+
+```toml
+[services.webapp]
+command = ["webapp"]
+
+[[services.webapp.routes]]
+id = "webapp"
+hosts = ["webapp.localhost"]
+target_port = 3000
+```
+
 2. Add a pane in `layouts/caddy.kdl`:
 
 ```kdl

@@ -145,3 +145,51 @@ def test_build_routes_raises_on_duplicate_ports(tmp_path: Path) -> None:
 
     with pytest.raises(RouteConfigError, match="Port 19000 used by both minio and s3browser"):
         build_routes(manifest, env_override={"S3BROWSER_PORT": "19000"})
+
+
+def test_target_port_fixed(tmp_path: Path) -> None:
+    toml = """
+[caddy]
+admin_url = "http://127.0.0.1:2019"
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.fixed]
+command = ["fixed-server"]
+
+[[services.fixed.routes]]
+id = "fixed"
+hosts = ["fixed.localhost"]
+target_port = 3000
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+    manifest = load_routes(path)
+
+    assert manifest.services["fixed"].routes[0].target_port == 3000
+    assert manifest.services["fixed"].routes[0].target_port_env is None
+
+    routes = build_routes(manifest)
+    assert routes[0]["handle"][0]["upstreams"][0]["dial"] == "127.0.0.1:3000"
+
+
+def test_target_port_rejects_both(tmp_path: Path) -> None:
+    toml = """
+[caddy]
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.bad]
+command = ["bad"]
+
+[[services.bad.routes]]
+id = "bad"
+hosts = ["bad.localhost"]
+target_port = 3000
+target_port_env = "BAD_PORT"
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+
+    with pytest.raises(RouteConfigError, match="not both"):
+        load_routes(path)
