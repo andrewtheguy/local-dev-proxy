@@ -1,27 +1,8 @@
 {
 	auto_https off
 	http_port 2800
+	admin 127.0.0.1:2019
 }
-
-http://s3browser.localhost {
-	bind 127.0.0.1 ::1
-	reverse_proxy 127.0.0.1:{$S3BROWSER_PORT}
-}
-
-http://minios3.localhost, http://*.minios3.localhost {
-	bind 127.0.0.1 ::1
-	reverse_proxy 127.0.0.1:{$MINIO_PORT}
-}
-
-http://minioconsole.localhost {
-	bind 127.0.0.1 ::1
-	reverse_proxy 127.0.0.1:{$MINIO_CONSOLE_PORT}
-}
-
-# http://weeds3.localhost, http://*.weeds3.localhost {
-# 	bind 127.0.0.1 ::1
-# 	reverse_proxy 127.0.0.1:{$WEED_S3_PORT}
-# }
 
 http:// {
 	bind 127.0.0.1 ::1

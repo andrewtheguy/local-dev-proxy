@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import ipaddress
+from pathlib import Path
+import tomllib
+from typing import Iterable, Mapping
+
+from .config import require_port
+
+
+class RouteConfigError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class CaddySettings:
+    admin_url: str
+    http_port: int
+    bind: tuple[str, ...]
+
+    def listen_addresses(self) -> list[str]:
+        listen: list[str] = []
+        for host in self.bind:
+            try:
+                ip = ipaddress.ip_address(host)
+            except ValueError:
+                listen.append(f"{host}:{self.http_port}")
+                continue
+
+            if ip.version == 6:
+                listen.append(f"[{host}]:{self.http_port}")
+            else:
+                listen.append(f"{host}:{self.http_port}")
+
+        return listen
+
+
+@dataclass(frozen=True)
+class ServiceRoute:
+    name: str
+    hosts: tuple[str, ...]
+    target_host: str
+    target_port_env: str
+    enabled: bool
+
+
+@dataclass(frozen=True)
+class RoutesManifest:
+    caddy: CaddySettings
+    services: dict[str, ServiceRoute]
+
+
+DEFAULT_ORDER = ("s3browser", "minio", "minioconsole")
+
+
+def load_routes(path: Path) -> RoutesManifest:
+    if not path.exists():
+        raise RouteConfigError(f"Routes manifest not found: {path}")
+
+    data = tomllib.loads(path.read_text())
+
+    caddy_data = data.get("caddy", {})
+    if not isinstance(caddy_data, dict):
+        raise RouteConfigError("[caddy] must be a table")
+
+    admin_url = str(caddy_data.get("admin_url", "http://127.0.0.1:2019"))
+    http_port = _parse_int(caddy_data.get("http_port", 2800), "caddy.http_port")
+
+    bind = caddy_data.get("bind", ["127.0.0.1", "::1"])
+    if not isinstance(bind, list) or not bind:
+        raise RouteConfigError("caddy.bind must be a non-empty list")
+    bind_hosts = tuple(str(host) for host in bind)
+
+    services_data = data.get("services")
+    if not isinstance(services_data, dict) or not services_data:
+        raise RouteConfigError("[services] must contain at least one service")
+
+    services: dict[str, ServiceRoute] = {}
+    for name, raw in services_data.items():
+        if not isinstance(raw, dict):
+            raise RouteConfigError(f"services.{name} must be a table")
+
+        hosts = raw.get("hosts")
+        if not isinstance(hosts, list) or not hosts:
+            raise RouteConfigError(f"services.{name}.hosts must be a non-empty list")
+
+        target_port_env = raw.get("target_port_env")
+        if not isinstance(target_port_env, str) or not target_port_env:
+            raise RouteConfigError(
+                f"services.{name}.target_port_env must be a non-empty string"
+            )
+
+        target_host = str(raw.get("target_host", "127.0.0.1"))
+        enabled = bool(raw.get("enabled", True))
+
+        services[name] = ServiceRoute(
+            name=str(name),
+            hosts=tuple(str(host) for host in hosts),
+            target_host=target_host,
+            target_port_env=target_port_env,
+            enabled=enabled,
+        )
+
+    return RoutesManifest(
+        caddy=CaddySettings(admin_url=admin_url, http_port=http_port, bind=bind_hosts),
+        services=services,
+    )
+
+
+def build_routes(
+    manifest: RoutesManifest,
+    env: Mapping[str, str],
+    active_services: Iterable[str],
+) -> list[dict]:
+    active = set(active_services)
+    ordered = _ordered_services(manifest, active)
+
+    routes: list[dict] = []
+    for service in ordered:
+        target_port = require_port(env, service.target_port_env)
+        routes.append(
+            {
+                "@id": f"route-{service.name}",
+                "match": [{"host": list(service.hosts)}],
+                "handle": [
+                    {
+                        "handler": "reverse_proxy",
+                        "upstreams": [{"dial": f"{service.target_host}:{target_port}"}],
+                    }
+                ],
+                "terminal": True,
+            }
+        )
+
+    routes.append(build_fallback_route())
+    return routes
+
+
+def build_fallback_route() -> dict:
+    return {
+        "@id": "route-fallback",
+        "handle": [
+            {
+                "handler": "static_response",
+                "status_code": 404,
+                "body": "Not Found caddy",
+            }
+        ],
+        "terminal": True,
+    }
+
+
+def _ordered_services(manifest: RoutesManifest, active: set[str]) -> list[ServiceRoute]:
+    priority = {name: index for index, name in enumerate(DEFAULT_ORDER)}
+
+    candidates = [
+        service
+        for service in manifest.services.values()
+        if service.enabled and service.name in active
+    ]
+
+    return sorted(
+        candidates,
+        key=lambda service: (priority.get(service.name, len(priority)), service.name),
+    )
+
+
+def _parse_int(value: object, field_name: str) -> int:
+    try:
+        parsed = int(str(value))
+    except ValueError as exc:
+        raise RouteConfigError(f"{field_name} must be an integer") from exc
+
+    if parsed < 1 or parsed > 65535:
+        raise RouteConfigError(f"{field_name} must be in range 1-65535")
+    return parsed

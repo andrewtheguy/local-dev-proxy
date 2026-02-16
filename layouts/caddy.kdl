@@ -12,8 +12,7 @@ layout {
   }
 
   tab name="s3browser" split_direction="vertical" {
-    pane name="caddy" command="./scripts/caddy.sh"
-    pane name="minio" command="./scripts/minio.sh"
-    pane name="s3browser" command="./scripts/s3browser.sh" focus=true
+    pane name="minio" command="uv run local-dev-proxy service minio"
+    pane name="s3browser" command="uv run local-dev-proxy service s3browser" focus=true
   }
 }
