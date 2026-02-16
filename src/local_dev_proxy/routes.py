@@ -169,25 +169,36 @@ def resolve_command(command: list[str], env: Mapping[str, str]) -> list[str]:
 
 
 def build_routes(manifest: RoutesManifest, env: Mapping[str, str]) -> list[dict]:
-    routes: list[dict] = []
+    # Resolve all ports first and check for duplicates.
+    resolved: list[tuple[ServiceRoute, int]] = []
+    seen_ports: dict[int, str] = {}
     for service in manifest.services.values():
         for route in service.routes:
-            target_port = require_port(env, route.target_port_env)
-            routes.append(
-                {
-                    "@id": f"route-{route.id}",
-                    "match": [{"host": list(route.hosts)}],
-                    "handle": [
-                        {
-                            "handler": "reverse_proxy",
-                            "upstreams": [
-                                {"dial": f"{route.target_host}:{target_port}"}
-                            ],
-                        }
-                    ],
-                    "terminal": True,
-                }
-            )
+            port = require_port(env, route.target_port_env)
+            if port in seen_ports:
+                raise RouteConfigError(
+                    f"Port {port} used by both {seen_ports[port]} and {route.id}"
+                )
+            seen_ports[port] = route.id
+            resolved.append((route, port))
+
+    routes: list[dict] = []
+    for route, target_port in resolved:
+        routes.append(
+            {
+                "@id": f"route-{route.id}",
+                "match": [{"host": list(route.hosts)}],
+                "handle": [
+                    {
+                        "handler": "reverse_proxy",
+                        "upstreams": [
+                            {"dial": f"{route.target_host}:{target_port}"}
+                        ],
+                    }
+                ],
+                "terminal": True,
+            }
+        )
 
     routes.append(build_fallback_route())
     return routes

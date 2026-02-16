@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from local_dev_proxy.routes import build_routes, load_routes, resolve_command
+from local_dev_proxy.routes import RouteConfigError, build_routes, load_routes, resolve_command
 
 
 SERVICES_TOML = """
@@ -121,3 +121,11 @@ def test_manifest_env_parsed(tmp_path: Path) -> None:
         "MINIO_CONSOLE_PORT": "19001",
         "S3BROWSER_PORT": "18170",
     }
+
+
+def test_build_routes_raises_on_duplicate_ports(tmp_path: Path) -> None:
+    manifest = load_routes(_write_manifest(tmp_path))
+    env = {**manifest.env, "S3BROWSER_PORT": "19000"}  # same as MINIO_PORT
+
+    with pytest.raises(RouteConfigError, match="Port 19000 used by both minio and s3browser"):
+        build_routes(manifest, env)
