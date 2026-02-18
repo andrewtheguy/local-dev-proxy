@@ -1,41 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import html
-import ipaddress
 from pathlib import Path
 import re
 import tomllib
 from typing import Mapping
 
-from .config import require_port
-
 
 class RouteConfigError(ValueError):
     pass
-
-
-@dataclass(frozen=True)
-class CaddySettings:
-    admin_url: str
-    http_port: int
-    bind: tuple[str, ...]
-
-    def listen_addresses(self) -> list[str]:
-        listen: list[str] = []
-        for host in self.bind:
-            try:
-                ip = ipaddress.ip_address(host)
-            except ValueError:
-                listen.append(f"{host}:{self.http_port}")
-                continue
-
-            if ip.version == 6:
-                listen.append(f"[{host}]:{self.http_port}")
-            else:
-                listen.append(f"{host}:{self.http_port}")
-
-        return listen
 
 
 @dataclass(frozen=True)
@@ -57,7 +30,8 @@ class ServiceDef:
 
 @dataclass(frozen=True)
 class RoutesManifest:
-    caddy: CaddySettings
+    http_port: int
+    bind: tuple[str, ...]
     services: dict[str, ServiceDef]
 
 
@@ -67,16 +41,11 @@ def load_routes(path: Path) -> RoutesManifest:
 
     data = tomllib.loads(path.read_text())
 
-    caddy_data = data.get("caddy", {})
-    if not isinstance(caddy_data, dict):
-        raise RouteConfigError("[caddy] must be a table")
+    http_port = _parse_int(data.get("http_port", 2800), "http_port")
 
-    admin_url = str(caddy_data.get("admin_url", "http://127.0.0.1:24019"))
-    http_port = _parse_int(caddy_data.get("http_port", 2800), "caddy.http_port")
-
-    bind = caddy_data.get("bind", ["127.0.0.1", "::1"])
+    bind = data.get("bind", ["127.0.0.1", "::1"])
     if not isinstance(bind, list) or not bind:
-        raise RouteConfigError("caddy.bind must be a non-empty list")
+        raise RouteConfigError("bind must be a non-empty list")
     bind_hosts = tuple(str(host) for host in bind)
 
     services_data = data.get("services")
@@ -162,7 +131,8 @@ def load_routes(path: Path) -> RoutesManifest:
         )
 
     return RoutesManifest(
-        caddy=CaddySettings(admin_url=admin_url, http_port=http_port, bind=bind_hosts),
+        http_port=http_port,
+        bind=bind_hosts,
         services=services,
     )
 
@@ -181,104 +151,6 @@ def resolve_command(command: list[str], env: Mapping[str, str]) -> list[str]:
         return re.sub(r"\{([A-Z_][A-Z0-9_]*)\}", replacer, arg)
 
     return [_substitute(arg) for arg in command]
-
-
-def build_routes(
-    manifest: RoutesManifest, env_override: Mapping[str, str] | None = None,
-) -> list[dict]:
-    # Resolve all ports first and check for duplicates.
-    resolved: list[tuple[ServiceRoute, int]] = []
-    seen_ports: dict[int, str] = {}
-    for service in manifest.services.values():
-        effective_env: dict[str, str] = dict(service.env)
-        if env_override:
-            effective_env.update(env_override)
-        for route in service.routes:
-            if route.target_port is not None:
-                port = route.target_port
-            else:
-                assert route.target_port_env is not None
-                port = require_port(effective_env, route.target_port_env)
-            if port in seen_ports:
-                raise RouteConfigError(
-                    f"Port {port} used by both {seen_ports[port]} and {route.id}"
-                )
-            seen_ports[port] = route.id
-            resolved.append((route, port))
-
-    routes: list[dict] = []
-    for route, target_port in resolved:
-        routes.append(
-            {
-                "@id": f"route-{route.id}",
-                "match": [{"host": list(route.hosts)}],
-                "handle": [
-                    {
-                        "handler": "reverse_proxy",
-                        "upstreams": [
-                            {"dial": f"{route.target_host}:{target_port}"}
-                        ],
-                    }
-                ],
-                "terminal": True,
-            }
-        )
-
-    routes.append(build_portal_route(manifest))
-    routes.append(build_fallback_route())
-    return routes
-
-
-def build_portal_route(manifest: RoutesManifest) -> dict:
-    http_port = manifest.caddy.http_port
-    items: list[str] = []
-    for service in manifest.services.values():
-        for route in service.routes:
-            for host in route.hosts:
-                if "*" in host:
-                    items.append(f"<li>{html.escape(host)}</li>")
-                else:
-                    url = f"http://{host}:{http_port}/"
-                    items.append(
-                        f'<li><a href="{html.escape(url)}">'
-                        f"{html.escape(host)}</a></li>"
-                    )
-
-    body = (
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        "<title>Local Dev Proxy</title></head><body>"
-        "<h1>Local Dev Proxy</h1><ul>"
-        + "\n".join(items)
-        + "</ul></body></html>"
-    )
-
-    return {
-        "@id": "route-portal",
-        "match": [{"host": ["localhost"]}],
-        "handle": [
-            {
-                "handler": "static_response",
-                "status_code": "200",
-                "headers": {"Content-Type": ["text/html; charset=utf-8"]},
-                "body": body,
-            }
-        ],
-        "terminal": True,
-    }
-
-
-def build_fallback_route() -> dict:
-    return {
-        "@id": "route-fallback",
-        "handle": [
-            {
-                "handler": "static_response",
-                "status_code": 404,
-                "body": "Not Found caddy",
-            }
-        ],
-        "terminal": True,
-    }
 
 
 def _parse_int(value: object, field_name: str) -> int:

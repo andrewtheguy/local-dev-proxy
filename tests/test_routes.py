@@ -4,17 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from local_dev_proxy.routes import RouteConfigError, build_routes, load_routes, resolve_command
+from local_dev_proxy.routes import RouteConfigError, load_routes, resolve_command
 
 
 SERVICES_TOML = """
-[caddy]
-admin_url = "http://127.0.0.1:2019"
 http_port = 2800
 bind = ["127.0.0.1", "::1"]
-
-[services.caddy]
-command = ["caddy", "run", "--config", "config/caddy-bootstrap.json"]
 
 [services.minio]
 command = ["minio", "server", "data", "--address", ":{MINIO_PORT}"]
@@ -47,70 +42,31 @@ def _write_manifest(tmp_path: Path) -> Path:
     return manifest
 
 
-def test_build_routes_is_deterministic_and_ports_are_resolved(tmp_path: Path) -> None:
+def test_manifest_fields(tmp_path: Path) -> None:
     manifest = load_routes(_write_manifest(tmp_path))
 
-    routes = build_routes(manifest)
-
-    assert [route.get("@id") for route in routes] == [
-        "route-minio",
-        "route-minioconsole",
-        "route-s3browser",
-        "route-portal",
-        "route-fallback",
-    ]
-
-    upstreams = {
-        route["@id"]: route["handle"][0]["upstreams"][0]["dial"]
-        for route in routes
-        if route.get("@id") not in ("route-fallback", "route-portal")
-    }
-    assert upstreams == {
-        "route-s3browser": "127.0.0.1:18170",
-        "route-minio": "127.0.0.1:19000",
-        "route-minioconsole": "127.0.0.1:19001",
-    }
+    assert manifest.http_port == 2800
+    assert manifest.bind == ("127.0.0.1", "::1")
+    assert "minio" in manifest.services
+    assert "s3browser" in manifest.services
 
 
-def test_build_routes_env_override(tmp_path: Path) -> None:
-    manifest = load_routes(_write_manifest(tmp_path))
-
-    routes = build_routes(manifest, env_override={"S3BROWSER_PORT": "9999"})
-
-    upstreams = {
-        route["@id"]: route["handle"][0]["upstreams"][0]["dial"]
-        for route in routes
-        if route.get("@id") not in ("route-fallback", "route-portal")
-    }
-    assert upstreams["route-s3browser"] == "127.0.0.1:9999"
-
-
-def test_build_routes_raises_when_required_port_is_missing(tmp_path: Path) -> None:
+def test_manifest_defaults(tmp_path: Path) -> None:
     toml = """
-[caddy]
-admin_url = "http://127.0.0.1:2019"
-http_port = 2800
-bind = ["127.0.0.1"]
+[services.app]
+command = ["serve"]
 
-[services.oops]
-command = ["oops"]
-
-[[services.oops.routes]]
-id = "oops"
-hosts = ["oops.localhost"]
-target_port_env = "OOPS_PORT"
+[[services.app.routes]]
+id = "app"
+hosts = ["app.localhost"]
+target_port = 3000
 """
     path = tmp_path / "services.toml"
     path.write_text(toml)
     manifest = load_routes(path)
 
-    with pytest.raises(ValueError, match="OOPS_PORT"):
-        build_routes(manifest)
-
-
-def test_listen_addresses_include_ipv6_brackets(tmp_path: Path) -> None:
-    manifest = load_routes(_write_manifest(tmp_path))
-    assert manifest.caddy.listen_addresses() == ["127.0.0.1:2800", "[::1]:2800"]
+    assert manifest.http_port == 2800
+    assert manifest.bind == ("127.0.0.1", "::1")
 
 
 def test_resolve_command_replaces_placeholders() -> None:
@@ -128,11 +84,6 @@ def test_resolve_command_raises_on_missing_var() -> None:
 def test_service_def_fields(tmp_path: Path) -> None:
     manifest = load_routes(_write_manifest(tmp_path))
 
-    caddy_svc = manifest.services["caddy"]
-    assert caddy_svc.command == ["caddy", "run", "--config", "config/caddy-bootstrap.json"]
-    assert caddy_svc.routes == []
-    assert caddy_svc.env == {}
-
     minio_svc = manifest.services["minio"]
     assert minio_svc.env["MINIO_PORT"] == "19000"
     assert minio_svc.env["MINIO_BROWSER_REDIRECT"] == "off"
@@ -141,17 +92,8 @@ def test_service_def_fields(tmp_path: Path) -> None:
     assert minio_svc.routes[1].id == "minioconsole"
 
 
-def test_build_routes_raises_on_duplicate_ports(tmp_path: Path) -> None:
-    manifest = load_routes(_write_manifest(tmp_path))
-
-    with pytest.raises(RouteConfigError, match="Port 19000 used by both minio and s3browser"):
-        build_routes(manifest, env_override={"S3BROWSER_PORT": "19000"})
-
-
 def test_target_port_fixed(tmp_path: Path) -> None:
     toml = """
-[caddy]
-admin_url = "http://127.0.0.1:2019"
 http_port = 2800
 bind = ["127.0.0.1"]
 
@@ -170,14 +112,9 @@ target_port = 3000
     assert manifest.services["fixed"].routes[0].target_port == 3000
     assert manifest.services["fixed"].routes[0].target_port_env is None
 
-    routes = build_routes(manifest)
-    assert routes[0]["handle"][0]["upstreams"][0]["dial"] == "127.0.0.1:3000"
-
 
 def test_unmanaged_service_parses(tmp_path: Path) -> None:
     toml = """
-[caddy]
-admin_url = "http://127.0.0.1:24019"
 http_port = 2800
 bind = ["127.0.0.1"]
 
@@ -200,43 +137,8 @@ target_port_env = "APP_PORT"
     assert svc.routes[0].id == "external"
 
 
-def test_build_routes_includes_unmanaged_service(tmp_path: Path) -> None:
-    toml = """
-[caddy]
-admin_url = "http://127.0.0.1:24019"
-http_port = 2800
-bind = ["127.0.0.1"]
-
-[services.managed]
-command = ["serve"]
-
-[[services.managed.routes]]
-id = "managed"
-hosts = ["managed.localhost"]
-target_port = 4000
-
-[services.unmanaged]
-env = {APP_PORT = "5000"}
-
-[[services.unmanaged.routes]]
-id = "unmanaged"
-hosts = ["unmanaged.localhost"]
-target_port_env = "APP_PORT"
-"""
-    path = tmp_path / "services.toml"
-    path.write_text(toml)
-    manifest = load_routes(path)
-
-    routes = build_routes(manifest)
-    ids = [r.get("@id") for r in routes]
-    assert "route-managed" in ids
-    assert "route-unmanaged" in ids
-    assert "route-fallback" in ids
-
-
 def test_command_empty_list_rejected(tmp_path: Path) -> None:
     toml = """
-[caddy]
 http_port = 2800
 bind = ["127.0.0.1"]
 
@@ -257,7 +159,6 @@ target_port = 3000
 
 def test_target_port_rejects_both(tmp_path: Path) -> None:
     toml = """
-[caddy]
 http_port = 2800
 bind = ["127.0.0.1"]
 

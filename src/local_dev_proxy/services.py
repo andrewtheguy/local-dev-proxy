@@ -4,15 +4,16 @@ import os
 import pty
 from pathlib import Path
 import signal
-import socket
 import subprocess
 import threading
 import time
+import urllib.request
+import urllib.error
 from typing import Mapping
 
-from .caddy_api import CaddyAPIError, CaddyAdminClient
 from .config import ProjectPaths, get_paths
-from .routes import RouteConfigError, RoutesManifest, build_routes, load_routes, resolve_command
+from .proxy import ADMIN_PORT, ProxyServer
+from .routes import RouteConfigError, RoutesManifest, load_routes, resolve_command
 
 
 class ServiceError(RuntimeError):
@@ -36,7 +37,7 @@ def run_service(name: str, paths: ProjectPaths | None = None) -> int:
     runtime_env.update(service.env)
 
     if service.routes:
-        _wait_for_caddy_health(manifest.caddy.admin_url, timeout_seconds=10.0)
+        _wait_for_proxy_health(timeout_seconds=10.0)
         sync_all_routes()
 
     return _run_process(command, runtime_env, resolved_paths.root)
@@ -47,12 +48,14 @@ _sync_routes_lock = threading.Lock()
 
 def sync_all_routes() -> None:
     with _sync_routes_lock:
-        paths = get_paths()
-        manifest = _load_manifest(paths)
-        routes = build_routes(manifest, env_override=os.environ)
-
-        with CaddyAdminClient(manifest.caddy.admin_url) as client:
-            client.load_config(paths.root / "config" / "caddy-bootstrap.json", routes)
+        admin_url = f"http://127.0.0.1:{ADMIN_PORT}/reload"
+        req = urllib.request.Request(admin_url, method="POST", data=b"")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status >= 400:
+                    raise ServiceError(f"Reload failed: HTTP {resp.status}")
+        except urllib.error.URLError as exc:
+            raise ServiceError(f"Failed to reach proxy admin: {exc}") from exc
 
 
 def _run_process(command: list[str], env: Mapping[str, str], cwd: Path) -> int:
@@ -82,18 +85,34 @@ def _run_process(command: list[str], env: Mapping[str, str], cwd: Path) -> int:
             signal.signal(sig, handler)
 
 
-def _wait_for_caddy_health(admin_url: str, timeout_seconds: float) -> None:
+def _wait_for_proxy_health(timeout_seconds: float) -> None:
     deadline = time.monotonic() + timeout_seconds
+    health_url = f"http://127.0.0.1:{ADMIN_PORT}/healthz"
 
     while time.monotonic() < deadline:
         try:
-            with CaddyAdminClient(admin_url) as client:
-                client.healthcheck()
-                return
-        except CaddyAPIError:
+            with urllib.request.urlopen(health_url, timeout=2) as resp:
+                if resp.status == 200:
+                    return
+        except (urllib.error.URLError, OSError):
             time.sleep(0.2)
 
-    raise ServiceError(f"Caddy did not become healthy at {admin_url} within {timeout_seconds}s")
+    raise ServiceError(
+        f"Proxy did not become healthy at {health_url} within {timeout_seconds}s"
+    )
+
+
+def start_proxy(paths: ProjectPaths | None = None) -> ProxyServer:
+    resolved_paths = paths or get_paths()
+    manifest = _load_manifest(resolved_paths)
+
+    server = ProxyServer(
+        services_file=resolved_paths.services_file,
+        http_port=manifest.http_port,
+        bind=manifest.bind,
+    )
+    server.start()
+    return server
 
 
 def _load_manifest(paths: ProjectPaths) -> RoutesManifest:
@@ -132,51 +151,6 @@ def _run_command(command: list[str], cwd: Path) -> None:
     except subprocess.CalledProcessError as exc:
         joined = " ".join(command)
         raise ServiceError(f"Command failed ({exc.returncode}): {joined}") from exc
-
-
-def start_caddy_background(paths: ProjectPaths | None = None) -> subprocess.Popen:
-    """Start Caddy as a non-blocking subprocess. Returns the Popen handle."""
-    resolved_paths = paths or get_paths()
-    manifest = _load_manifest(resolved_paths)
-
-    _check_listen_ports_free(manifest.caddy.listen_addresses())
-
-    service = manifest.services.get("caddy")
-    if service is None:
-        raise ServiceError("No 'caddy' service defined in services.toml")
-    if service.command is None:
-        raise ServiceError("Service 'caddy' has no command")
-
-    effective_env = {**service.env, **os.environ}
-    command = resolve_command(service.command, effective_env)
-
-    runtime_env = os.environ.copy()
-    runtime_env.update(service.env)
-
-    try:
-        return subprocess.Popen(command, env=runtime_env, cwd=resolved_paths.root)
-    except FileNotFoundError as exc:
-        raise ServiceError(f"Command not found: {command[0]}") from exc
-
-
-def _check_listen_ports_free(listen_addresses: list[str]) -> None:
-    """Raise ServiceError if any listen address is already in use."""
-    for addr in listen_addresses:
-        host, port_str = addr.rsplit(":", 1)
-        host = host.strip("[]")
-        port = int(port_str)
-        family = socket.AF_INET6 if ":" in host else socket.AF_INET
-        with socket.socket(family, socket.SOCK_STREAM) as sock:
-            try:
-                sock.connect((host, port))
-                sock.close()
-                raise ServiceError(
-                    f"Port {addr} is already in use — is another Caddy instance running?"
-                )
-            except ConnectionRefusedError:
-                pass
-            except OSError:
-                pass
 
 
 def start_zellij_headless(
