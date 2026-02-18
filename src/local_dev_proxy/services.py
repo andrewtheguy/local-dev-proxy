@@ -163,7 +163,7 @@ def start_caddy_background(paths: ProjectPaths | None = None) -> subprocess.Pope
 def _check_listen_ports_free(listen_addresses: list[str]) -> None:
     """Raise ServiceError if any listen address is already in use."""
     for addr in listen_addresses:
-        host, _, port_str = addr.rsplit(":", 1)
+        host, port_str = addr.rsplit(":", 1)
         host = host.strip("[]")
         port = int(port_str)
         family = socket.AF_INET6 if ":" in host else socket.AF_INET
