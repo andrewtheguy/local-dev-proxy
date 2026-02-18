@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ServiceInfo:
     name: str
-    command: list[str]
+    command: list[str] | None
     env: dict[str, str]
-    status: str = "stopped"  # running | stopped | crashed
+    managed: bool = True
+    status: str = "stopped"  # running | stopped | crashed | unmanaged
     pid: int | None = None
     exit_code: int | None = None
     restart_count: int = 0
@@ -39,41 +40,50 @@ class ServiceManager:
 
         for name, service_def in manifest.services.items():
             if service_def.command is None:
-                continue
-            effective_env = {**service_def.env, **os.environ}
-            command = resolve_command(service_def.command, effective_env)
-            runtime_env = {**os.environ, **service_def.env}
-            self._services[name] = ServiceInfo(
-                name=name,
-                command=command,
-                env=runtime_env,
-            )
+                self._services[name] = ServiceInfo(
+                    name=name,
+                    command=None,
+                    env={},
+                    managed=False,
+                    status="unmanaged",
+                )
+            else:
+                effective_env = {**service_def.env, **os.environ}
+                command = resolve_command(service_def.command, effective_env)
+                runtime_env = {**os.environ, **service_def.env}
+                self._services[name] = ServiceInfo(
+                    name=name,
+                    command=command,
+                    env=runtime_env,
+                )
 
     def start_all(self) -> None:
         with self._lock:
-            for name in self._services:
-                self._start_service_locked(name)
+            for name, info in self._services.items():
+                if info.managed:
+                    self._start_service_locked(name)
         self._start_monitor()
 
     def stop_all(self) -> None:
         self._stop_monitor()
         with self._lock:
-            for name in self._services:
-                self._stop_service_locked(name)
+            for name, info in self._services.items():
+                if info.managed:
+                    self._stop_service_locked(name)
 
     def start_service(self, name: str) -> None:
         with self._lock:
-            self._require_service(name)
+            self._require_managed(name)
             self._start_service_locked(name)
 
     def stop_service(self, name: str) -> None:
         with self._lock:
-            self._require_service(name)
+            self._require_managed(name)
             self._stop_service_locked(name)
 
     def restart_service(self, name: str) -> None:
         with self._lock:
-            self._require_service(name)
+            self._require_managed(name)
             self._stop_service_locked(name)
             info = self._services[name]
             info.restart_count += 1
@@ -86,6 +96,7 @@ class ServiceManager:
                 result.append({
                     "name": info.name,
                     "status": info.status,
+                    "managed": info.managed,
                     "pid": info.pid,
                     "exit_code": info.exit_code,
                     "restart_count": info.restart_count,
@@ -102,8 +113,14 @@ class ServiceManager:
         if name not in self._services:
             raise KeyError(f"Unknown service: {name}")
 
+    def _require_managed(self, name: str) -> None:
+        self._require_service(name)
+        if not self._services[name].managed:
+            raise KeyError(f"Service '{name}' is unmanaged")
+
     def _start_service_locked(self, name: str) -> None:
         info = self._services[name]
+        assert info.command is not None, f"Cannot start unmanaged service: {name}"
         if info.status == "running" and info.process and info.process.poll() is None:
             return
 

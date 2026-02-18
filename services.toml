@@ -23,3 +23,10 @@ env = {S3BROWSER_PORT = "18170"}
 id = "s3browser"
 hosts = ["s3browser.localhost"]
 target_port_env = "S3BROWSER_PORT"
+
+[services.vite]
+
+[[services.vite.routes]]
+id = "vite"
+hosts = ["vite.localhost"]
+target_port = 5173
