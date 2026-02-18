@@ -52,8 +52,7 @@ def sync_all_routes() -> None:
         routes = build_routes(manifest, env_override=os.environ)
 
         with CaddyAdminClient(manifest.caddy.admin_url) as client:
-            client.ensure_server(paths.root / "config" / "caddy-bootstrap.json")
-            client.set_routes(routes)
+            client.load_config(paths.root / "config" / "caddy-bootstrap.json", routes)
 
 
 def _run_process(command: list[str], env: Mapping[str, str], cwd: Path) -> int:

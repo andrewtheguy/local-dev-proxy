@@ -29,37 +29,19 @@ class CaddyAdminClient:
         response = self._request("GET", "/config/")
         self._ensure_success(response, "Caddy admin healthcheck failed")
 
-    def ensure_server(self, bootstrap_config_path: Path) -> None:
-        self.healthcheck()
-
-        response = self._request("GET", "/config/apps/http/servers/srv0")
-        if response.status_code == 200:
-            return
-
-        if response.status_code == 404:
-            self.load_bootstrap(bootstrap_config_path)
-            return
-
-        self._ensure_success(response, "Failed to inspect Caddy srv0 server")
-
-    def load_bootstrap(self, bootstrap_config_path: Path) -> None:
+    def load_config(self, bootstrap_config_path: Path, routes: list[dict]) -> None:
         if not bootstrap_config_path.exists():
             raise CaddyAPIError(f"Bootstrap Caddy config does not exist: {bootstrap_config_path}")
 
         payload = json.loads(bootstrap_config_path.read_text())
+        payload["apps"]["http"]["servers"]["srv0"]["routes"] = routes
         response = self._request(
             "POST",
             "/load",
             headers={"Content-Type": "application/json"},
             content=json.dumps(payload),
         )
-        self._ensure_success(response, "Failed to load bootstrap Caddy config")
-
-    def set_routes(self, routes: list[dict]) -> None:
-        path = "/config/apps/http/servers/srv0/routes"
-        self._request("DELETE", path)
-        response = self._request("PUT", path, json=routes)
-        self._ensure_success(response, "Failed to update Caddy routes")
+        self._ensure_success(response, "Failed to load Caddy config")
 
     def get_routes(self) -> list[dict]:
         response = self._request("GET", "/config/apps/http/servers/srv0/routes")
