@@ -8,11 +8,13 @@ env = {MINIO_BROWSER_REDIRECT = "off", MINIO_PORT = "19000", MINIO_CONSOLE_PORT 
 [[services.minio.routes]]
 id = "minio"
 hosts = ["minios3.localhost", "*.minios3.localhost"]
+target_host = "127.0.0.1"
 target_port_env = "MINIO_PORT"
 
 [[services.minio.routes]]
 id = "minioconsole"
 hosts = ["minioconsole.localhost"]
+target_host = "127.0.0.1"
 target_port_env = "MINIO_CONSOLE_PORT"
 
 [services.s3browser]
@@ -22,6 +24,7 @@ env = {S3BROWSER_PORT = "18170"}
 [[services.s3browser.routes]]
 id = "s3browser"
 hosts = ["s3browser.localhost"]
+target_host = "127.0.0.1"
 target_port_env = "S3BROWSER_PORT"
 
 [services.vite]

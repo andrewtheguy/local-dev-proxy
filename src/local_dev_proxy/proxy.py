@@ -171,7 +171,8 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         logger.info("%s %s %s -> 404", request.method, host, request.path)
         return web.Response(status=404, text="Not Found")
 
-    target_base = f"http://{route.target_host}:{route.target_port}"
+    host_part = f"[{route.target_host}]" if ":" in route.target_host else route.target_host
+    target_base = f"http://{host_part}:{route.target_port}"
     path = request.match_info.get("path_info", "")
     target_url = f"{target_base}/{path}"
     if request.query_string:

@@ -111,7 +111,12 @@ def load_routes(path: Path) -> RoutesManifest:
                     )
                 target_port_env = raw_port_env
 
-            target_host = str(route_raw.get("target_host", "127.0.0.1"))
+            _ALLOWED_HOSTS = ("127.0.0.1", "::1", "localhost")
+            target_host = str(route_raw.get("target_host", "localhost"))
+            if target_host not in _ALLOWED_HOSTS:
+                raise RouteConfigError(
+                    f"{prefix}.target_host must be one of {_ALLOWED_HOSTS}, got: {target_host!r}"
+                )
 
             routes.append(
                 ServiceRoute(
