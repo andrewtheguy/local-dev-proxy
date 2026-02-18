@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import json
-import threading
 from pathlib import Path
 from typing import Any
 
 import httpx
-
-_routes_lock = threading.Lock()
 
 
 class CaddyAPIError(RuntimeError):
@@ -60,9 +57,8 @@ class CaddyAdminClient:
 
     def set_routes(self, routes: list[dict]) -> None:
         path = "/config/apps/http/servers/srv0/routes"
-        with _routes_lock:
-            self._request("DELETE", path)
-            response = self._request("PUT", path, json=routes)
+        self._request("DELETE", path)
+        response = self._request("PUT", path, json=routes)
         self._ensure_success(response, "Failed to update Caddy routes")
 
     def get_routes(self) -> list[dict]:

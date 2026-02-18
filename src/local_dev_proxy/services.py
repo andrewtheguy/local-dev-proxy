@@ -37,23 +37,23 @@ def run_service(name: str, paths: ProjectPaths | None = None) -> int:
 
     if service.routes:
         _wait_for_caddy_health(manifest.caddy.admin_url, timeout_seconds=10.0)
-        _sync_all_routes(resolved_paths, manifest)
+        sync_all_routes()
 
     return _run_process(command, runtime_env, resolved_paths.root)
 
 
-def sync_all_routes(paths: ProjectPaths | None = None) -> None:
-    resolved_paths = paths or get_paths()
-    manifest = _load_manifest(resolved_paths)
-    _sync_all_routes(resolved_paths, manifest)
+_sync_routes_lock = threading.Lock()
 
 
-def _sync_all_routes(paths: ProjectPaths, manifest: RoutesManifest) -> None:
-    routes = build_routes(manifest, env_override=os.environ)
+def sync_all_routes() -> None:
+    with _sync_routes_lock:
+        paths = get_paths()
+        manifest = _load_manifest(paths)
+        routes = build_routes(manifest, env_override=os.environ)
 
-    with CaddyAdminClient(manifest.caddy.admin_url) as client:
-        client.ensure_server(paths.root / "config" / "caddy-bootstrap.json")
-        client.set_routes(routes)
+        with CaddyAdminClient(manifest.caddy.admin_url) as client:
+            client.ensure_server(paths.root / "config" / "caddy-bootstrap.json")
+            client.set_routes(routes)
 
 
 def _run_process(command: list[str], env: Mapping[str, str], cwd: Path) -> int:
