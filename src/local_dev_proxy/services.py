@@ -52,8 +52,8 @@ def _sync_all_routes(paths: ProjectPaths, manifest: RoutesManifest) -> None:
 
     with CaddyAdminClient(manifest.caddy.admin_url) as client:
         client.ensure_server(paths.root / "config" / "caddy-bootstrap.json")
-        client.set_listen_addresses(manifest.caddy.listen_addresses())
         client.set_routes(routes)
+        client.set_listen_addresses(manifest.caddy.listen_addresses())
 
 
 def _run_process(command: list[str], env: Mapping[str, str], cwd: Path) -> int:
