@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import fcntl
 import os
+import sys
 import threading
 import webbrowser
 
@@ -80,5 +82,24 @@ class LocalDevProxyApp(rumps.App):
             pass
 
 
+_LOCK_PATH = os.path.join(os.environ.get("TMPDIR", "/tmp"), "local-dev-proxy.lock")
+
+
+def _acquire_lock() -> int:
+    """Acquire an exclusive lock file. Returns the fd (kept open for lifetime of process)."""
+    fd = os.open(_LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        print("local-dev-proxy is already running.", file=sys.stderr)
+        sys.exit(1)
+    return fd
+
+
 def run_tray() -> None:
-    LocalDevProxyApp().run()
+    lock_fd = _acquire_lock()
+    try:
+        LocalDevProxyApp().run()
+    finally:
+        os.close(lock_fd)
