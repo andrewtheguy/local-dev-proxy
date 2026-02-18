@@ -21,6 +21,15 @@ logger = logging.getLogger(__name__)
 ADMIN_PORT = 24019
 
 
+def _configure_logging() -> None:
+    pkg_logger = logging.getLogger("local_dev_proxy")
+    if not pkg_logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
+        pkg_logger.addHandler(handler)
+        pkg_logger.setLevel(logging.INFO)
+
+
 @dataclass(frozen=True)
 class ResolvedRoute:
     id: str
@@ -148,6 +157,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
 
     # Portal page for localhost
     if host == "localhost":
+        logger.info("%s %s %s -> portal", request.method, host, request.path)
         return web.Response(
             text=route_table.portal_html,
             content_type="text/html",
@@ -156,6 +166,7 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
 
     route = route_table.match(host)
     if route is None:
+        logger.info("%s %s %s -> 404", request.method, host, request.path)
         return web.Response(status=404, text="Not Found")
 
     target_base = f"http://{route.target_host}:{route.target_port}"
@@ -166,9 +177,12 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
 
     # WebSocket upgrade
     if _is_websocket_upgrade(request):
+        logger.info("%s %s %s -> ws %s", request.method, host, request.path, route.id)
         return await _proxy_websocket(request, target_url)
 
-    return await _proxy_http(request, target_url)
+    resp = await _proxy_http(request, target_url)
+    logger.info("%s %s %s -> %s %d", request.method, host, request.path, route.id, resp.status)
+    return resp
 
 
 def _is_websocket_upgrade(request: web.Request) -> bool:
@@ -269,6 +283,8 @@ async def _reload_handler(request: web.Request) -> web.Response:
     services_file: Path = request.app["services_file"]
     try:
         route_table.reload(services_file, env=os.environ)
+        ids = [r.id for r in route_table.routes]
+        logger.info("Routes reloaded: %s", ", ".join(ids))
         return web.Response(text="reloaded")
     except Exception as exc:
         logger.exception("Reload failed")
@@ -298,6 +314,7 @@ class ProxyServer:
         return self._route_table
 
     def start(self) -> None:
+        _configure_logging()
         self._route_table.reload(self._services_file, env=os.environ)
 
         self._loop = asyncio.new_event_loop()

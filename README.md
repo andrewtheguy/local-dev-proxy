@@ -1,4 +1,4 @@
-Local dev proxy: Caddy reverse proxy + zellij-managed services for MinIO and s3browser.
+Local dev proxy: built-in Python reverse proxy + zellij-managed services for MinIO and s3browser.
 
 ## What you get
 
@@ -7,18 +7,18 @@ Local dev proxy: Caddy reverse proxy + zellij-managed services for MinIO and s3b
 | `http://s3browser.localhost:2800` | s3browser UI |
 | `http://minios3.localhost:2800` | MinIO S3 API |
 | `http://minioconsole.localhost:2800` | MinIO Console |
+| `http://localhost:2800` | Portal (links to all services) |
 
 ## Prerequisites
 
 - `uv`
-- `caddy`
 - `zellij`
 - `minio`
 - `s3browser`
 
 ## Configuration
 
-Everything lives in `services.toml`: caddy settings, service commands, env/ports, and routes.
+Everything lives in `services.toml`: proxy settings (`http_port`, `bind`), service commands, env/ports, and routes.
 
 ## Usage
 
@@ -27,7 +27,7 @@ uv sync
 uv run local-dev-proxy tray
 ```
 
-This starts a macOS menu bar app that runs Caddy as a subprocess and launches minio/s3browser in a headless zellij session. Click a service name in the tray menu to open it in your browser.
+This starts a macOS menu bar app that runs an in-process reverse proxy and launches minio/s3browser in a headless zellij session. Click a service name in the tray menu to open it in your browser.
 
 To view service logs, attach to the zellij session manually:
 
@@ -68,7 +68,7 @@ hosts = ["webapp.localhost"]
 target_port = 3000
 ```
 
-2. Add a tab in `layouts/caddy.kdl`:
+2. Add a tab in `layouts/services.kdl`:
 
 ```kdl
 tab name="myservice" {
@@ -81,5 +81,5 @@ tab name="myservice" {
 ## Troubleshooting
 
 - **Service URL not proxying:** attach to the zellij session (`zellij attach local-dev-proxy`) to check the service tab, and confirm the port is set in `services.toml`.
-- **Caddy not responding:** check the tray app — if Caddy crashes, you'll get a macOS notification. Restart with `uv run local-dev-proxy tray`.
+- **Proxy not responding:** check the tray app console output for errors. Restart with `uv run local-dev-proxy tray`.
 - **Session attached elsewhere:** to disconnect other clients, press `Ctrl+O` then `W` to open the session manager, then `Ctrl+X` to detach them.
