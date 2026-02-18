@@ -56,13 +56,14 @@ def test_build_routes_is_deterministic_and_ports_are_resolved(tmp_path: Path) ->
         "route-minio",
         "route-minioconsole",
         "route-s3browser",
+        "route-portal",
         "route-fallback",
     ]
 
     upstreams = {
         route["@id"]: route["handle"][0]["upstreams"][0]["dial"]
         for route in routes
-        if route.get("@id") != "route-fallback"
+        if route.get("@id") not in ("route-fallback", "route-portal")
     }
     assert upstreams == {
         "route-s3browser": "127.0.0.1:18170",
@@ -79,7 +80,7 @@ def test_build_routes_env_override(tmp_path: Path) -> None:
     upstreams = {
         route["@id"]: route["handle"][0]["upstreams"][0]["dial"]
         for route in routes
-        if route.get("@id") != "route-fallback"
+        if route.get("@id") not in ("route-fallback", "route-portal")
     }
     assert upstreams["route-s3browser"] == "127.0.0.1:9999"
 

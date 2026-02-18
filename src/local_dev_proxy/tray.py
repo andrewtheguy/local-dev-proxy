@@ -27,6 +27,12 @@ class LocalDevProxyApp(rumps.App):
         menu_items: list[rumps.MenuItem | None] = []
         self._url_map: dict[str, str] = {}
 
+        http_port = self._manifest.caddy.http_port
+        portal_item = rumps.MenuItem("Portal", callback=self._open_url)
+        menu_items.append(portal_item)
+        self._url_map["Portal"] = f"http://localhost:{http_port}/"
+        menu_items.append(None)  # separator
+
         for service in self._manifest.services.values():
             for route in service.routes:
                 host = route.hosts[0]

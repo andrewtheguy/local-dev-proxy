@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import html
 import ipaddress
 from pathlib import Path
 import re
@@ -223,8 +224,47 @@ def build_routes(
             }
         )
 
+    routes.append(build_portal_route(manifest))
     routes.append(build_fallback_route())
     return routes
+
+
+def build_portal_route(manifest: RoutesManifest) -> dict:
+    http_port = manifest.caddy.http_port
+    items: list[str] = []
+    for service in manifest.services.values():
+        for route in service.routes:
+            for host in route.hosts:
+                if "*" in host:
+                    items.append(f"<li>{html.escape(host)}</li>")
+                else:
+                    url = f"http://{host}:{http_port}/"
+                    items.append(
+                        f'<li><a href="{html.escape(url)}">'
+                        f"{html.escape(host)}</a></li>"
+                    )
+
+    body = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>Local Dev Proxy</title></head><body>"
+        "<h1>Local Dev Proxy</h1><ul>"
+        + "\n".join(items)
+        + "</ul></body></html>"
+    )
+
+    return {
+        "@id": "route-portal",
+        "match": [{"host": ["localhost"]}],
+        "handle": [
+            {
+                "handler": "static_response",
+                "status_code": "200",
+                "headers": {"Content-Type": ["text/html; charset=utf-8"]},
+                "body": body,
+            }
+        ],
+        "terminal": True,
+    }
 
 
 def build_fallback_route() -> dict:

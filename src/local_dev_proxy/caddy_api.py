@@ -87,11 +87,12 @@ class CaddyAdminClient:
             raise CaddyAPIError(f"Unable to reach Caddy admin API at {self.admin_url}: {exc}") from exc
 
     def _replace_config_key(self, path: str, payload: Any, context: str) -> None:
-        # PATCH the parent object with JSON Merge Patch — this creates or
-        # replaces the key in a single call, avoiding the PATCH-404/PUT-409
-        # mismatch that Caddy returns when a key exists but has no value.
-        parent, _, key = path.rstrip("/").rpartition("/")
-        response = self._request("PATCH", parent, json={key: payload})
+        # DELETE + PUT at the exact path. This preserves sibling keys on the
+        # parent object (unlike PATCH/POST on the parent, which replaces the
+        # entire parent).  DELETE may 404 if the key doesn't exist yet — that's fine.
+        clean = path.rstrip("/")
+        self._request("DELETE", clean)          # ignore errors
+        response = self._request("PUT", clean, json=payload)
         self._ensure_success(response, context)
 
     @staticmethod

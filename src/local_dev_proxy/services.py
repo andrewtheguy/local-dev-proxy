@@ -4,6 +4,7 @@ import os
 import pty
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import threading
 import time
@@ -53,7 +54,6 @@ def _sync_all_routes(paths: ProjectPaths, manifest: RoutesManifest) -> None:
     with CaddyAdminClient(manifest.caddy.admin_url) as client:
         client.ensure_server(paths.root / "config" / "caddy-bootstrap.json")
         client.set_routes(routes)
-        client.set_listen_addresses(manifest.caddy.listen_addresses())
 
 
 def _run_process(command: list[str], env: Mapping[str, str], cwd: Path) -> int:
@@ -140,6 +140,8 @@ def start_caddy_background(paths: ProjectPaths | None = None) -> subprocess.Pope
     resolved_paths = paths or get_paths()
     manifest = _load_manifest(resolved_paths)
 
+    _check_listen_ports_free(manifest.caddy.listen_addresses())
+
     service = manifest.services.get("caddy")
     if service is None:
         raise ServiceError("No 'caddy' service defined in services.toml")
@@ -156,6 +158,26 @@ def start_caddy_background(paths: ProjectPaths | None = None) -> subprocess.Pope
         return subprocess.Popen(command, env=runtime_env, cwd=resolved_paths.root)
     except FileNotFoundError as exc:
         raise ServiceError(f"Command not found: {command[0]}") from exc
+
+
+def _check_listen_ports_free(listen_addresses: list[str]) -> None:
+    """Raise ServiceError if any listen address is already in use."""
+    for addr in listen_addresses:
+        host, _, port_str = addr.rsplit(":", 1)
+        host = host.strip("[]")
+        port = int(port_str)
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        with socket.socket(family, socket.SOCK_STREAM) as sock:
+            try:
+                sock.connect((host, port))
+                sock.close()
+                raise ServiceError(
+                    f"Port {addr} is already in use — is another Caddy instance running?"
+                )
+            except ConnectionRefusedError:
+                pass
+            except OSError:
+                pass
 
 
 def start_zellij_headless(
