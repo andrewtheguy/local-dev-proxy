@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import fcntl
 import os
 import sys
@@ -52,6 +53,10 @@ class LocalDevProxyApp(rumps.App):
             self._paths, SESSION_NAME,
         )
 
+        self._cleaned_up = False
+
+        atexit.register(self._cleanup)
+
         self._monitor_thread = threading.Thread(
             target=self._monitor_caddy, daemon=True,
         )
@@ -65,6 +70,7 @@ class LocalDevProxyApp(rumps.App):
     def _monitor_caddy(self) -> None:
         returncode = self._caddy_proc.wait()
         if returncode != 0:
+            self._cleanup()
             rumps.notification(
                 "LocalDevProxy",
                 "Caddy crashed",
@@ -78,6 +84,10 @@ class LocalDevProxyApp(rumps.App):
         rumps.quit_application()
 
     def _cleanup(self) -> None:
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
+
         if self._caddy_proc.poll() is None:
             self._caddy_proc.terminate()
             self._caddy_proc.wait(timeout=5)
