@@ -22,6 +22,9 @@ dev = [
   "pytest>=8.0.0",
 ]
 
+[tool.uv]
+default-groups = ["dev"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/local_dev_proxy"]
 

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+_routes_lock = threading.Lock()
 
 
 class CaddyAPIError(RuntimeError):
@@ -55,19 +58,12 @@ class CaddyAdminClient:
         )
         self._ensure_success(response, "Failed to load bootstrap Caddy config")
 
-    def set_listen_addresses(self, listen_addresses: list[str]) -> None:
-        self._replace_config_key(
-            path="/config/apps/http/servers/srv0/listen",
-            payload=listen_addresses,
-            context="Failed to update Caddy listen addresses",
-        )
-
     def set_routes(self, routes: list[dict]) -> None:
-        self._replace_config_key(
-            path="/config/apps/http/servers/srv0/routes",
-            payload=routes,
-            context="Failed to update Caddy routes",
-        )
+        path = "/config/apps/http/servers/srv0/routes"
+        with _routes_lock:
+            self._request("DELETE", path)
+            response = self._request("PUT", path, json=routes)
+        self._ensure_success(response, "Failed to update Caddy routes")
 
     def get_routes(self) -> list[dict]:
         response = self._request("GET", "/config/apps/http/servers/srv0/routes")
@@ -85,15 +81,6 @@ class CaddyAdminClient:
             return self._client.request(method, path, **kwargs)
         except httpx.HTTPError as exc:
             raise CaddyAPIError(f"Unable to reach Caddy admin API at {self.admin_url}: {exc}") from exc
-
-    def _replace_config_key(self, path: str, payload: Any, context: str) -> None:
-        # DELETE + PUT at the exact path. This preserves sibling keys on the
-        # parent object (unlike PATCH/POST on the parent, which replaces the
-        # entire parent).  DELETE may 404 if the key doesn't exist yet — that's fine.
-        clean = path.rstrip("/")
-        self._request("DELETE", clean)          # ignore errors
-        response = self._request("PUT", clean, json=payload)
-        self._ensure_success(response, context)
 
     @staticmethod
     def _ensure_success(response: httpx.Response, context: str) -> None:
