@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import fcntl
 import os
+import signal
 import subprocess
 import sys
 import webbrowser
@@ -92,7 +93,18 @@ def _acquire_lock() -> int:
 
 def run_tray() -> None:
     lock_fd = _acquire_lock()
+    app = LocalDevProxyApp()
+
+    def _signal_handler(signum: int, _frame: object) -> None:
+        app._cleanup()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, _signal_handler)
+
     try:
-        LocalDevProxyApp().run()
+        app.run()
     finally:
         os.close(lock_fd)
