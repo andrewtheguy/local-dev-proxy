@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import pty
 from pathlib import Path
 import signal
 import subprocess
+import threading
 import time
 from typing import Mapping
 
@@ -14,24 +16,6 @@ from .routes import RouteConfigError, RoutesManifest, build_routes, load_routes,
 
 class ServiceError(RuntimeError):
     pass
-
-
-def run_session_up(paths: ProjectPaths | None = None, session_name: str = "caddy") -> int:
-    resolved_paths = paths or get_paths()
-    if not resolved_paths.layout_file.exists():
-        raise ServiceError(f"Missing zellij layout file: {resolved_paths.layout_file}")
-
-    session_info = _find_session_line(session_name)
-
-    if session_info:
-        if "EXITED" in session_info:
-            _run_command(["zellij", "delete-session", session_name], cwd=resolved_paths.root)
-        else:
-            os.chdir(resolved_paths.root)
-            os.execvp("zellij", ["zellij", "attach", session_name])
-
-    os.chdir(resolved_paths.root)
-    os.execvp("zellij", ["zellij", "-s", session_name, "-n", str(resolved_paths.layout_file)])
 
 
 def run_service(name: str, paths: ProjectPaths | None = None) -> int:
@@ -149,3 +133,76 @@ def _run_command(command: list[str], cwd: Path) -> None:
     except subprocess.CalledProcessError as exc:
         joined = " ".join(command)
         raise ServiceError(f"Command failed ({exc.returncode}): {joined}") from exc
+
+
+def start_caddy_background(paths: ProjectPaths | None = None) -> subprocess.Popen:
+    """Start Caddy as a non-blocking subprocess. Returns the Popen handle."""
+    resolved_paths = paths or get_paths()
+    manifest = _load_manifest(resolved_paths)
+
+    service = manifest.services.get("caddy")
+    if service is None:
+        raise ServiceError("No 'caddy' service defined in services.toml")
+    if service.command is None:
+        raise ServiceError("Service 'caddy' has no command")
+
+    effective_env = {**service.env, **os.environ}
+    command = resolve_command(service.command, effective_env)
+
+    runtime_env = os.environ.copy()
+    runtime_env.update(service.env)
+
+    try:
+        return subprocess.Popen(command, env=runtime_env, cwd=resolved_paths.root)
+    except FileNotFoundError as exc:
+        raise ServiceError(f"Command not found: {command[0]}") from exc
+
+
+def start_zellij_headless(
+    paths: ProjectPaths | None = None, session_name: str = "local-dev-proxy",
+) -> tuple[int, int]:
+    """Start a headless zellij session using pty.fork().
+
+    Returns (child_pid, master_fd). A daemon thread drains the master fd
+    so zellij doesn't block on output.
+    """
+    resolved_paths = paths or get_paths()
+    if not resolved_paths.layout_file.exists():
+        raise ServiceError(f"Missing zellij layout file: {resolved_paths.layout_file}")
+
+    # Clean up any exited session with the same name.
+    session_info = _find_session_line(session_name)
+    if session_info and "EXITED" in session_info:
+        _run_command(["zellij", "delete-session", session_name], cwd=resolved_paths.root)
+
+    pid, master_fd = pty.fork()
+    if pid == 0:
+        # Child process — pty.fork() already set up the slave pty as stdin/stdout/stderr.
+        os.chdir(resolved_paths.root)
+        os.execvp(
+            "zellij",
+            ["zellij", "-s", session_name, "-n", str(resolved_paths.layout_file)],
+        )
+    else:
+        # Parent — drain the master fd so zellij doesn't block on output.
+        def _drain_pty(fd: int) -> None:
+            while True:
+                try:
+                    data = os.read(fd, 4096)
+                    if not data:
+                        break
+                except OSError:
+                    break
+
+        drain_thread = threading.Thread(target=_drain_pty, args=(master_fd,), daemon=True)
+        drain_thread.start()
+        return pid, master_fd
+
+
+def kill_zellij_session(session_name: str = "local-dev-proxy") -> None:
+    """Force-delete a zellij session."""
+    subprocess.run(
+        ["zellij", "delete-session", session_name, "--force"],
+        check=False,
+        capture_output=True,
+    )

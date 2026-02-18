@@ -24,12 +24,16 @@ Everything lives in `services.toml`: caddy settings, service commands, env/ports
 
 ```sh
 uv sync
-uv run local-dev-proxy session up
+uv run local-dev-proxy tray
 ```
 
-This launches a zellij session with panes for caddy, minio, and s3browser. Each service syncs its routes to Caddy automatically on startup.
+This starts a macOS menu bar app that runs Caddy as a subprocess and launches minio/s3browser in a headless zellij session. Click a service name in the tray menu to open it in your browser.
 
-Re-running `session up` reattaches if the session is still active, or creates a new one if it exited.
+To view service logs, attach to the zellij session manually:
+
+```sh
+zellij attach local-dev-proxy
+```
 
 To list service URLs:
 
@@ -64,16 +68,18 @@ hosts = ["webapp.localhost"]
 target_port = 3000
 ```
 
-2. Add a pane in `layouts/caddy.kdl`:
+2. Add a tab in `layouts/caddy.kdl`:
 
 ```kdl
-pane name="myservice" command="uv" {
-  args "run" "local-dev-proxy" "run" "myservice"
+tab name="myservice" {
+  pane name="myservice" command="uv" {
+    args "run" "local-dev-proxy" "run" "myservice"
+  }
 }
 ```
 
 ## Troubleshooting
 
-- **Service URL not proxying:** confirm the service process is alive in its zellij pane and the port is set in `services.toml`.
-- **Caddy not responding:** check the caddy pane for errors. It must be running before other services can sync routes.
+- **Service URL not proxying:** attach to the zellij session (`zellij attach local-dev-proxy`) to check the service tab, and confirm the port is set in `services.toml`.
+- **Caddy not responding:** check the tray app — if Caddy crashes, you'll get a macOS notification. Restart with `uv run local-dev-proxy tray`.
 - **Session attached elsewhere:** to disconnect other clients, press `Ctrl+O` then `W` to open the session manager, then `Ctrl+X` to detach them.

@@ -4,13 +4,10 @@ import typer
 
 from .config import get_paths
 from .routes import load_routes
-from .services import ServiceError, run_service, run_session_up, sync_all_routes
+from .services import ServiceError, run_service, sync_all_routes
 
 
 app = typer.Typer(help="Local dev proxy orchestration CLI")
-session_app = typer.Typer(help="Zellij session controls")
-
-app.add_typer(session_app, name="session")
 
 
 @app.command("run")
@@ -49,16 +46,13 @@ def sync_command() -> None:
     typer.echo("Routes synced successfully.")
 
 
-@session_app.command("up")
-def session_up() -> None:
-    """Start or reattach to the zellij session."""
-    try:
-        return_code = run_session_up()
-    except ServiceError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+@app.command("tray")
+def tray_command() -> None:
+    """Run as a macOS menu bar app."""
+    from .tray import run_tray
 
-    raise typer.Exit(code=return_code)
+    run_tray()
+
 
 
 if __name__ == "__main__":
