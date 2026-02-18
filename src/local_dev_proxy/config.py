@@ -10,7 +10,6 @@ from typing import Mapping
 class ProjectPaths:
     root: Path
     services_file: Path
-    layout_file: Path
 
 
 def project_root() -> Path:
@@ -25,7 +24,6 @@ def get_paths(root: Path | None = None) -> ProjectPaths:
     return ProjectPaths(
         root=root_path,
         services_file=root_path / "services.toml",
-        layout_file=root_path / "layouts" / "services.kdl",
     )
 
 

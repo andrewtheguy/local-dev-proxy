@@ -10,6 +10,8 @@ import threading
 from pathlib import Path
 from typing import Mapping
 
+import json
+
 import aiohttp
 from aiohttp import web
 
@@ -265,12 +267,28 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.WebSock
 
 # --- Admin handler ---
 
-def make_admin_app(route_table: RouteTable, services_file: Path) -> web.Application:
+def make_admin_app(
+    route_table: RouteTable,
+    services_file: Path,
+    service_manager: object | None = None,
+) -> web.Application:
+    from .process_manager import ServiceManager
+
     app = web.Application()
     app["route_table"] = route_table
     app["services_file"] = services_file
+    if service_manager is not None:
+        app["service_manager"] = service_manager
     app.router.add_get("/healthz", _healthz_handler)
     app.router.add_post("/reload", _reload_handler)
+
+    if isinstance(service_manager, ServiceManager):
+        app.router.add_get("/services", _services_status_handler)
+        app.router.add_post("/services/{name}/restart", _service_restart_handler)
+        app.router.add_post("/services/{name}/stop", _service_stop_handler)
+        app.router.add_post("/services/{name}/start", _service_start_handler)
+        app.router.add_get("/services/{name}/logs", _service_logs_handler)
+
     return app
 
 
@@ -291,6 +309,71 @@ async def _reload_handler(request: web.Request) -> web.Response:
         return web.Response(status=500, text=str(exc))
 
 
+async def _services_status_handler(request: web.Request) -> web.Response:
+    from .process_manager import ServiceManager
+    sm: ServiceManager = request.app["service_manager"]
+    return web.Response(
+        text=json.dumps(sm.get_status()),
+        content_type="application/json",
+    )
+
+
+async def _service_restart_handler(request: web.Request) -> web.Response:
+    from .process_manager import ServiceManager
+    sm: ServiceManager = request.app["service_manager"]
+    name = request.match_info["name"]
+    try:
+        sm.restart_service(name)
+        return web.Response(text=json.dumps({"ok": True}), content_type="application/json")
+    except KeyError as exc:
+        return web.Response(status=404, text=str(exc))
+
+
+async def _service_stop_handler(request: web.Request) -> web.Response:
+    from .process_manager import ServiceManager
+    sm: ServiceManager = request.app["service_manager"]
+    name = request.match_info["name"]
+    try:
+        sm.stop_service(name)
+        return web.Response(text=json.dumps({"ok": True}), content_type="application/json")
+    except KeyError as exc:
+        return web.Response(status=404, text=str(exc))
+
+
+async def _service_start_handler(request: web.Request) -> web.Response:
+    from .process_manager import ServiceManager
+    sm: ServiceManager = request.app["service_manager"]
+    name = request.match_info["name"]
+    try:
+        sm.start_service(name)
+        return web.Response(text=json.dumps({"ok": True}), content_type="application/json")
+    except KeyError as exc:
+        return web.Response(status=404, text=str(exc))
+
+
+async def _service_logs_handler(request: web.Request) -> web.Response:
+    from .process_manager import ServiceManager
+    sm: ServiceManager = request.app["service_manager"]
+    name = request.match_info["name"]
+    try:
+        log_path = sm.get_log_path(name)
+    except KeyError as exc:
+        return web.Response(status=404, text=str(exc))
+
+    lines_param = request.query.get("lines", "100")
+    try:
+        num_lines = int(lines_param)
+    except ValueError:
+        num_lines = 100
+
+    if not log_path.exists():
+        return web.Response(text="", content_type="text/plain")
+
+    all_lines = log_path.read_text().splitlines()
+    tail = all_lines[-num_lines:] if len(all_lines) > num_lines else all_lines
+    return web.Response(text="\n".join(tail) + "\n", content_type="text/plain")
+
+
 # --- ProxyServer ---
 
 class ProxyServer:
@@ -299,10 +382,12 @@ class ProxyServer:
         services_file: Path,
         http_port: int,
         bind: tuple[str, ...],
+        service_manager: object | None = None,
     ) -> None:
         self._services_file = services_file
         self._http_port = http_port
         self._bind = bind
+        self._service_manager = service_manager
         self._route_table = RouteTable()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -332,7 +417,7 @@ class ProxyServer:
 
     async def _start_servers(self) -> None:
         proxy_app = make_proxy_app(self._route_table)
-        admin_app = make_admin_app(self._route_table, self._services_file)
+        admin_app = make_admin_app(self._route_table, self._services_file, self._service_manager)
 
         # Start proxy on each bind address
         for host in self._bind:

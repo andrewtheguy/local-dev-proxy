@@ -3,6 +3,7 @@ from __future__ import annotations
 import atexit
 import fcntl
 import os
+import subprocess
 import sys
 import webbrowser
 
@@ -10,13 +11,7 @@ import rumps
 
 from .config import get_paths
 from .routes import load_routes
-from .services import (
-    kill_zellij_session,
-    start_proxy,
-    start_zellij_headless,
-)
-
-SESSION_NAME = "local-dev-proxy"
+from .services import start_proxy, start_services_managed
 
 
 class LocalDevProxyApp(rumps.App):
@@ -42,24 +37,29 @@ class LocalDevProxyApp(rumps.App):
                 self._url_map[route.id] = url
 
         menu_items.append(None)  # separator
+        menu_items.append(rumps.MenuItem("Open Logs Folder", callback=self._open_logs_folder))
 
         icon_path = str(self._paths.root / "assets" / "tray-icon.png")
         super().__init__("LocalDevProxy", icon=icon_path, template=True, menu=menu_items, quit_button=None)
         self.title = None
 
-        self._proxy = start_proxy(self._paths)
-        self._zellij_pid, self._zellij_fd = start_zellij_headless(
-            self._paths, SESSION_NAME,
-        )
+        self._service_manager = start_services_managed(self._paths)
+        self._service_manager.start_all()
+
+        self._proxy = start_proxy(self._paths, service_manager=self._service_manager)
 
         self._cleaned_up = False
-
         atexit.register(self._cleanup)
 
     def _open_url(self, sender: rumps.MenuItem) -> None:
         url = self._url_map.get(sender.title)
         if url:
             webbrowser.open(url)
+
+    def _open_logs_folder(self, _sender: rumps.MenuItem) -> None:
+        log_dir = self._paths.root / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        subprocess.Popen(["open", str(log_dir)])
 
     @rumps.clicked("Quit")
     def on_quit(self, _sender: rumps.MenuItem) -> None:
@@ -72,13 +72,7 @@ class LocalDevProxyApp(rumps.App):
         self._cleaned_up = True
 
         self._proxy.stop()
-
-        kill_zellij_session(SESSION_NAME)
-
-        try:
-            os.close(self._zellij_fd)
-        except OSError:
-            pass
+        self._service_manager.stop_all()
 
 
 _LOCK_PATH = os.path.join(os.environ.get("TMPDIR", "/tmp"), "local-dev-proxy.lock")
