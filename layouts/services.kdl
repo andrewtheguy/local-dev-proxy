@@ -11,13 +11,13 @@ layout {
     }
   }
 
-  tab name="s3browser" split_direction="vertical" {
-    pane name="caddy" command="uv" {
-      args "run" "local-dev-proxy" "run" "caddy"
-    }
+  tab name="minio" {
     pane name="minio" command="uv" {
       args "run" "local-dev-proxy" "run" "minio"
     }
+  }
+
+  tab name="s3browser" {
     pane name="s3browser" command="uv" focus=true {
       args "run" "local-dev-proxy" "run" "s3browser"
     }

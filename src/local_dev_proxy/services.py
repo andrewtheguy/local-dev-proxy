@@ -1,37 +1,23 @@
 from __future__ import annotations
 
 import os
+import pty
 from pathlib import Path
 import signal
 import subprocess
+import threading
 import time
+import urllib.request
+import urllib.error
 from typing import Mapping
 
-from .caddy_api import CaddyAPIError, CaddyAdminClient
 from .config import ProjectPaths, get_paths
-from .routes import RouteConfigError, RoutesManifest, build_routes, load_routes, resolve_command
+from .proxy import ADMIN_PORT, ProxyServer
+from .routes import RouteConfigError, RoutesManifest, load_routes, resolve_command
 
 
 class ServiceError(RuntimeError):
     pass
-
-
-def run_session_up(paths: ProjectPaths | None = None, session_name: str = "caddy") -> int:
-    resolved_paths = paths or get_paths()
-    if not resolved_paths.layout_file.exists():
-        raise ServiceError(f"Missing zellij layout file: {resolved_paths.layout_file}")
-
-    session_info = _find_session_line(session_name)
-
-    if session_info:
-        if "EXITED" in session_info:
-            _run_command(["zellij", "delete-session", session_name], cwd=resolved_paths.root)
-        else:
-            os.chdir(resolved_paths.root)
-            os.execvp("zellij", ["zellij", "attach", session_name])
-
-    os.chdir(resolved_paths.root)
-    os.execvp("zellij", ["zellij", "-s", session_name, "-n", str(resolved_paths.layout_file)])
 
 
 def run_service(name: str, paths: ProjectPaths | None = None) -> int:
@@ -51,25 +37,25 @@ def run_service(name: str, paths: ProjectPaths | None = None) -> int:
     runtime_env.update(service.env)
 
     if service.routes:
-        _wait_for_caddy_health(manifest.caddy.admin_url, timeout_seconds=10.0)
-        _sync_all_routes(resolved_paths, manifest)
+        _wait_for_proxy_health(timeout_seconds=10.0)
+        sync_all_routes()
 
     return _run_process(command, runtime_env, resolved_paths.root)
 
 
-def sync_all_routes(paths: ProjectPaths | None = None) -> None:
-    resolved_paths = paths or get_paths()
-    manifest = _load_manifest(resolved_paths)
-    _sync_all_routes(resolved_paths, manifest)
+_sync_routes_lock = threading.Lock()
 
 
-def _sync_all_routes(paths: ProjectPaths, manifest: RoutesManifest) -> None:
-    routes = build_routes(manifest, env_override=os.environ)
-
-    with CaddyAdminClient(manifest.caddy.admin_url) as client:
-        client.ensure_server(paths.root / "config" / "caddy-bootstrap.json")
-        client.set_listen_addresses(manifest.caddy.listen_addresses())
-        client.set_routes(routes)
+def sync_all_routes() -> None:
+    with _sync_routes_lock:
+        admin_url = f"http://127.0.0.1:{ADMIN_PORT}/reload"
+        req = urllib.request.Request(admin_url, method="POST", data=b"")
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status >= 400:
+                    raise ServiceError(f"Reload failed: HTTP {resp.status}")
+        except urllib.error.URLError as exc:
+            raise ServiceError(f"Failed to reach proxy admin: {exc}") from exc
 
 
 def _run_process(command: list[str], env: Mapping[str, str], cwd: Path) -> int:
@@ -99,18 +85,34 @@ def _run_process(command: list[str], env: Mapping[str, str], cwd: Path) -> int:
             signal.signal(sig, handler)
 
 
-def _wait_for_caddy_health(admin_url: str, timeout_seconds: float) -> None:
+def _wait_for_proxy_health(timeout_seconds: float) -> None:
     deadline = time.monotonic() + timeout_seconds
+    health_url = f"http://127.0.0.1:{ADMIN_PORT}/healthz"
 
     while time.monotonic() < deadline:
         try:
-            with CaddyAdminClient(admin_url) as client:
-                client.healthcheck()
-                return
-        except CaddyAPIError:
+            with urllib.request.urlopen(health_url, timeout=2) as resp:
+                if resp.status == 200:
+                    return
+        except (urllib.error.URLError, OSError):
             time.sleep(0.2)
 
-    raise ServiceError(f"Caddy did not become healthy at {admin_url} within {timeout_seconds}s")
+    raise ServiceError(
+        f"Proxy did not become healthy at {health_url} within {timeout_seconds}s"
+    )
+
+
+def start_proxy(paths: ProjectPaths | None = None) -> ProxyServer:
+    resolved_paths = paths or get_paths()
+    manifest = _load_manifest(resolved_paths)
+
+    server = ProxyServer(
+        services_file=resolved_paths.services_file,
+        http_port=manifest.http_port,
+        bind=manifest.bind,
+    )
+    server.start()
+    return server
 
 
 def _load_manifest(paths: ProjectPaths) -> RoutesManifest:
@@ -149,3 +151,53 @@ def _run_command(command: list[str], cwd: Path) -> None:
     except subprocess.CalledProcessError as exc:
         joined = " ".join(command)
         raise ServiceError(f"Command failed ({exc.returncode}): {joined}") from exc
+
+
+def start_zellij_headless(
+    paths: ProjectPaths | None = None, session_name: str = "local-dev-proxy",
+) -> tuple[int, int]:
+    """Start a headless zellij session using pty.fork().
+
+    Returns (child_pid, master_fd). A daemon thread drains the master fd
+    so zellij doesn't block on output.
+    """
+    resolved_paths = paths or get_paths()
+    if not resolved_paths.layout_file.exists():
+        raise ServiceError(f"Missing zellij layout file: {resolved_paths.layout_file}")
+
+    # Clean up any exited session with the same name.
+    session_info = _find_session_line(session_name)
+    if session_info and "EXITED" in session_info:
+        _run_command(["zellij", "delete-session", session_name], cwd=resolved_paths.root)
+
+    pid, master_fd = pty.fork()
+    if pid == 0:
+        # Child process — pty.fork() already set up the slave pty as stdin/stdout/stderr.
+        os.chdir(resolved_paths.root)
+        os.execvp(
+            "zellij",
+            ["zellij", "-s", session_name, "-n", str(resolved_paths.layout_file)],
+        )
+    else:
+        # Parent — drain the master fd so zellij doesn't block on output.
+        def _drain_pty(fd: int) -> None:
+            while True:
+                try:
+                    data = os.read(fd, 4096)
+                    if not data:
+                        break
+                except OSError:
+                    break
+
+        drain_thread = threading.Thread(target=_drain_pty, args=(master_fd,), daemon=True)
+        drain_thread.start()
+        return pid, master_fd
+
+
+def kill_zellij_session(session_name: str = "local-dev-proxy") -> None:
+    """Force-delete a zellij session."""
+    subprocess.run(
+        ["zellij", "delete-session", session_name, "--force"],
+        check=False,
+        capture_output=True,
+    )
