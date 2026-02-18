@@ -37,7 +37,9 @@ class LocalDevProxyApp(rumps.App):
 
         menu_items.append(None)  # separator
 
-        super().__init__("LocalDevProxy", menu=menu_items, quit_button=None)
+        icon_path = str(self._paths.root / "assets" / "tray-icon.png")
+        super().__init__("LocalDevProxy", icon=icon_path, template=True, menu=menu_items, quit_button=None)
+        self.title = None
 
         self._caddy_proc = start_caddy_background(self._paths)
         self._zellij_pid, self._zellij_fd = start_zellij_headless(
