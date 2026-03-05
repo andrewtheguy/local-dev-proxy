@@ -78,7 +78,11 @@ def stop_manager_command() -> None:
         typer.echo("local-dev-proxy is not running.")
         raise typer.Exit(code=1)
 
-    os.kill(pid, sig.SIGTERM)
+    try:
+        os.kill(pid, sig.SIGTERM)
+    except ProcessLookupError:
+        typer.echo(f"Manager process (PID {pid}) already exited.")
+        raise typer.Exit(code=1)
     typer.echo(f"Sent SIGTERM to manager (PID {pid}).")
 
 
@@ -90,17 +94,21 @@ def restart_manager_command() -> None:
 
     pid = _find_manager_pid()
     if pid is not None:
-        os.kill(pid, sig.SIGTERM)
-        typer.echo(f"Sent SIGTERM to manager (PID {pid}). Waiting for shutdown...")
-        for _ in range(50):  # wait up to 5 seconds
-            try:
-                os.kill(pid, 0)
-                time.sleep(0.1)
-            except ProcessLookupError:
-                break
+        try:
+            os.kill(pid, sig.SIGTERM)
+        except ProcessLookupError:
+            typer.echo(f"Manager process (PID {pid}) already exited.")
         else:
-            typer.echo("Manager did not stop in time.", err=True)
-            raise typer.Exit(code=1)
+            typer.echo(f"Sent SIGTERM to manager (PID {pid}). Waiting for shutdown...")
+            for _ in range(50):  # wait up to 5 seconds
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.1)
+                except ProcessLookupError:
+                    break
+            else:
+                typer.echo("Manager did not stop in time.", err=True)
+                raise typer.Exit(code=1)
 
     from .tray import run_tray
     run_tray()
