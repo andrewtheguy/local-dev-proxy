@@ -145,7 +145,7 @@ def _filter_headers(headers: Mapping[str, str]) -> dict[str, str]:
 
 
 def make_proxy_app(route_table: RouteTable) -> web.Application:
-    app = web.Application()
+    app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB
     app["route_table"] = route_table
     app.router.add_route("*", "/{path_info:.*}", _proxy_handler)
     return app
