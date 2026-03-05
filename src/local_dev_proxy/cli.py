@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import subprocess
 import sys
 import urllib.error
@@ -12,6 +14,7 @@ from .config import get_paths
 from .proxy import ADMIN_PORT
 from .routes import load_routes
 from .services import ServiceError, sync_all_routes
+from .tray import _LOCK_PATH
 
 
 app = typer.Typer(help="Local dev proxy orchestration CLI")
@@ -33,6 +36,81 @@ def start_manager_command() -> None:
     """Run as a macOS menu bar app with built-in process manager."""
     from .tray import run_tray
 
+    run_tray()
+
+
+def _find_manager_pid() -> int | None:
+    """Return the PID of the running manager, or None if not running."""
+    try:
+        fd = os.open(_LOCK_PATH, os.O_WRONLY)
+    except FileNotFoundError:
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Lock succeeded — no manager is running
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return None
+    except OSError:
+        # Lock is held — read PID from /proc or use lsof
+        pass
+    finally:
+        os.close(fd)
+
+    # Find the PID holding the lock
+    try:
+        out = subprocess.check_output(
+            ["lsof", "-t", _LOCK_PATH], text=True, stderr=subprocess.DEVNULL,
+        ).strip()
+        if out:
+            return int(out.splitlines()[0])
+    except (subprocess.CalledProcessError, ValueError):
+        pass
+    return None
+
+
+@app.command("stop-manager")
+def stop_manager_command() -> None:
+    """Stop the running manager process."""
+    import signal as sig
+
+    pid = _find_manager_pid()
+    if pid is None:
+        typer.echo("local-dev-proxy is not running.")
+        raise typer.Exit(code=1)
+
+    try:
+        os.kill(pid, sig.SIGTERM)
+    except ProcessLookupError:
+        typer.echo(f"Manager process (PID {pid}) already exited.")
+        raise typer.Exit(code=1)
+    typer.echo(f"Sent SIGTERM to manager (PID {pid}).")
+
+
+@app.command("restart-manager")
+def restart_manager_command() -> None:
+    """Stop the running manager and start it again."""
+    import signal as sig
+    import time
+
+    pid = _find_manager_pid()
+    if pid is not None:
+        try:
+            os.kill(pid, sig.SIGTERM)
+        except ProcessLookupError:
+            typer.echo(f"Manager process (PID {pid}) already exited.")
+        else:
+            typer.echo(f"Sent SIGTERM to manager (PID {pid}). Waiting for shutdown...")
+            for _ in range(50):  # wait up to 5 seconds
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.1)
+                except ProcessLookupError:
+                    break
+            else:
+                typer.echo("Manager did not stop in time.", err=True)
+                raise typer.Exit(code=1)
+
+    from .tray import run_tray
     run_tray()
 
 
