@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 import aiohttp
@@ -358,6 +359,7 @@ async def test_proxy_websocket_forwards_handshake_headers(aiohttp_client: type) 
 
 async def test_proxy_websocket_forwards_close_code_and_reason(aiohttp_client: type) -> None:
     received: dict[str, int | str | None] = {"code": None, "reason": None}
+    client_close_code: int | None = None
 
     async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse()
@@ -392,11 +394,174 @@ async def test_proxy_websocket_forwards_close_code_and_reason(aiohttp_client: ty
     try:
         async with client.ws_connect("/ws", headers={"Host": "test.localhost"}) as ws:
             await ws.close(code=4001, message=b"client shutdown")
+            client_close_code = ws.close_code
         for _ in range(20):
             if received["code"] is not None:
                 break
             await asyncio.sleep(0.01)
+        assert client_close_code == 4001
         assert received == {"code": 4001, "reason": "client shutdown"}
+    finally:
+        await upstream_server.close()
+
+
+async def test_proxy_websocket_logs_and_closes_both_sides_on_client_error(
+    aiohttp_client: type,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    received: dict[str, object | None] = {"type": None, "data": None, "extra": None}
+
+    async def ws_handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        msg = await ws.receive()
+        received["type"] = msg.type
+        received["data"] = msg.data
+        received["extra"] = msg.extra
+        return ws
+
+    upstream_app = web.Application()
+    upstream_app.router.add_get("/ws", ws_handler)
+    upstream_server = TestServer(upstream_app)
+    await upstream_server.start_server()
+
+    rt = RouteTable()
+    rt._routes = [
+        ResolvedRoute(
+            id="test-service",
+            host_patterns=("test.localhost",),
+            target_host="127.0.0.1",
+            target_port=upstream_server.port,
+        ),
+    ]
+    rt._portal_html = ""
+
+    proxy_app = make_proxy_app(rt)
+
+    original_prepare = web.WebSocketResponse.prepare
+    original_receive = web.WebSocketResponse.receive
+
+    async def patched_prepare(self: web.WebSocketResponse, request: web.Request) -> web.StreamResponse:
+        resp = await original_prepare(self, request)
+        if request.app is proxy_app:
+            setattr(self, "_inject_proxy_error", True)
+        return resp
+
+    async def patched_receive(self: web.WebSocketResponse, *args: object, **kwargs: object) -> aiohttp.WSMessage:
+        if getattr(self, "_inject_proxy_error", False) and not getattr(self, "_error_injected", False):
+            setattr(self, "_error_injected", True)
+            return aiohttp.WSMessage(aiohttp.WSMsgType.ERROR, RuntimeError("client boom"), None)
+        return await original_receive(self, *args, **kwargs)
+
+    monkeypatch.setattr(web.WebSocketResponse, "prepare", patched_prepare)
+    monkeypatch.setattr(web.WebSocketResponse, "receive", patched_receive)
+
+    client = await aiohttp_client(proxy_app)
+    try:
+        with caplog.at_level(logging.WARNING, logger="local_dev_proxy.proxy"):
+            async with client.ws_connect("/ws", headers={"Host": "test.localhost"}) as ws:
+                msg = await ws.receive()
+                assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED)
+
+        for _ in range(20):
+            if received["type"] is not None:
+                break
+            await asyncio.sleep(0.01)
+
+        assert received["type"] == aiohttp.WSMsgType.CLOSE
+        assert received["data"] == aiohttp.WSCloseCode.INTERNAL_ERROR
+        assert "WebSocket client error" in caplog.text
+        assert "client boom" in caplog.text
+    finally:
+        await upstream_server.close()
+
+
+async def test_proxy_websocket_logs_and_closes_both_sides_on_upstream_error(
+    aiohttp_client: type,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    received: dict[str, object | None] = {"type": None, "data": None, "extra": None}
+
+    async def ws_handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        msg = await ws.receive()
+        received["type"] = msg.type
+        received["data"] = msg.data
+        received["extra"] = msg.extra
+        return ws
+
+    upstream_app = web.Application()
+    upstream_app.router.add_get("/ws", ws_handler)
+    upstream_server = TestServer(upstream_app)
+    await upstream_server.start_server()
+
+    rt = RouteTable()
+    rt._routes = [
+        ResolvedRoute(
+            id="test-service",
+            host_patterns=("test.localhost",),
+            target_host="127.0.0.1",
+            target_port=upstream_server.port,
+        ),
+    ]
+    rt._portal_html = ""
+
+    proxy_app = make_proxy_app(rt)
+
+    original_ws_connect = aiohttp.ClientSession.ws_connect
+    original_receive = aiohttp.ClientWebSocketResponse.receive
+    upstream_ref = f":{upstream_server.port}/ws"
+
+    class _MarkedWSConnect:
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+
+        async def __aenter__(self) -> aiohttp.ClientWebSocketResponse:
+            ws = await self._inner.__aenter__()
+            setattr(ws, "_inject_proxy_error", True)
+            return ws
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> object:
+            return await self._inner.__aexit__(exc_type, exc, tb)
+
+    def patched_ws_connect(self: aiohttp.ClientSession, url: object, *args: object, **kwargs: object) -> object:
+        ctx = original_ws_connect(self, url, *args, **kwargs)
+        if upstream_ref in str(url):
+            return _MarkedWSConnect(ctx)
+        return ctx
+
+    async def patched_receive(
+        self: aiohttp.ClientWebSocketResponse,
+        *args: object,
+        **kwargs: object,
+    ) -> aiohttp.WSMessage:
+        if getattr(self, "_inject_proxy_error", False) and not getattr(self, "_error_injected", False):
+            setattr(self, "_error_injected", True)
+            return aiohttp.WSMessage(aiohttp.WSMsgType.ERROR, RuntimeError("upstream boom"), None)
+        return await original_receive(self, *args, **kwargs)
+
+    monkeypatch.setattr(aiohttp.ClientSession, "ws_connect", patched_ws_connect)
+    monkeypatch.setattr(aiohttp.ClientWebSocketResponse, "receive", patched_receive)
+
+    client = await aiohttp_client(proxy_app)
+    try:
+        with caplog.at_level(logging.WARNING, logger="local_dev_proxy.proxy"):
+            async with client.ws_connect("/ws", headers={"Host": "test.localhost"}) as ws:
+                msg = await ws.receive()
+                assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED)
+
+        for _ in range(20):
+            if received["type"] is not None:
+                break
+            await asyncio.sleep(0.01)
+
+        assert received["type"] == aiohttp.WSMsgType.CLOSE
+        assert received["data"] == aiohttp.WSCloseCode.INTERNAL_ERROR
+        assert "WebSocket upstream error" in caplog.text
+        assert "upstream boom" in caplog.text
     finally:
         await upstream_server.close()
 

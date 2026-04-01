@@ -322,9 +322,14 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                     with suppress(asyncio.CancelledError):
                         await task
 
-                if close_target in ("upstream", "both"):
+                if close_target == "upstream":
+                    await ws_response.close(code=code, message=message)
                     await ws_upstream.close(code=code, message=message)
-                if close_target in ("client", "both"):
+                elif close_target == "client":
+                    await ws_upstream.close(code=code, message=message)
+                    await ws_response.close(code=code, message=message)
+                else:
+                    await ws_upstream.close(code=code, message=message)
                     await ws_response.close(code=code, message=message)
                 return ws_response
     except aiohttp.WSServerHandshakeError as exc:
