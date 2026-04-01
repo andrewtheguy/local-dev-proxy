@@ -306,6 +306,94 @@ async def test_proxy_websocket(aiohttp_client: type) -> None:
         await upstream_server.close()
 
 
+async def test_proxy_websocket_forwards_handshake_headers(aiohttp_client: type) -> None:
+    async def ws_handler(request: web.Request) -> web.StreamResponse:
+        if request.headers.get("Cookie") != "session=abc123":
+            return web.Response(status=403, text="missing cookie")
+        if request.headers.get("Origin") != "http://test.localhost":
+            return web.Response(status=403, text="missing origin")
+        if request.headers.get("Host") != "test.localhost":
+            return web.Response(status=403, text="wrong host")
+
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.send_str("ready")
+        await ws.close()
+        return ws
+
+    upstream_app = web.Application()
+    upstream_app.router.add_get("/ws", ws_handler)
+    upstream_server = TestServer(upstream_app)
+    await upstream_server.start_server()
+
+    rt = RouteTable()
+    rt._routes = [
+        ResolvedRoute(
+            id="test-service",
+            host_patterns=("test.localhost",),
+            target_host="127.0.0.1",
+            target_port=upstream_server.port,
+        ),
+    ]
+    rt._portal_html = ""
+
+    proxy_app = make_proxy_app(rt)
+    client = await aiohttp_client(proxy_app)
+    try:
+        async with client.ws_connect(
+            "/ws",
+            headers={
+                "Host": "test.localhost",
+                "Cookie": "session=abc123",
+                "Origin": "http://test.localhost",
+            },
+        ) as ws:
+            msg = await ws.receive()
+            assert msg.type == aiohttp.WSMsgType.TEXT
+            assert msg.data == "ready"
+    finally:
+        await upstream_server.close()
+
+
+async def test_proxy_websocket_returns_upstream_handshake_failure(aiohttp_client: type) -> None:
+    async def ws_handler(_: web.Request) -> web.StreamResponse:
+        return web.Response(status=403, text="forbidden")
+
+    upstream_app = web.Application()
+    upstream_app.router.add_get("/ws", ws_handler)
+    upstream_server = TestServer(upstream_app)
+    await upstream_server.start_server()
+
+    rt = RouteTable()
+    rt._routes = [
+        ResolvedRoute(
+            id="test-service",
+            host_patterns=("test.localhost",),
+            target_host="127.0.0.1",
+            target_port=upstream_server.port,
+        ),
+    ]
+    rt._portal_html = ""
+
+    proxy_app = make_proxy_app(rt)
+    client = await aiohttp_client(proxy_app)
+    try:
+        resp = await client.get(
+            "/ws",
+            headers={
+                "Host": "test.localhost",
+                "Upgrade": "websocket",
+                "Connection": "Upgrade",
+                "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+                "Sec-WebSocket-Version": "13",
+            },
+        )
+        assert resp.status == 403
+        assert await resp.text() == "Invalid response status"
+    finally:
+        await upstream_server.close()
+
+
 async def test_proxy_502_when_upstream_down(aiohttp_client: type) -> None:
     rt = RouteTable()
     rt._routes = [
