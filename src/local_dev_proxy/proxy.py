@@ -176,6 +176,10 @@ def _get_websocket_close_args(msg: aiohttp.WSMessage) -> tuple[int, str | bytes]
     return code, message
 
 
+def _get_websocket_error_detail(msg: aiohttp.WSMessage) -> object:
+    return msg.data if msg.data is not None else msg.extra
+
+
 def make_proxy_app(route_table: RouteTable) -> web.Application:
     app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB
     app["route_table"] = route_table
@@ -271,7 +275,7 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                 ws_response = web.WebSocketResponse(protocols=response_protocols, autoclose=False)
                 await ws_response.prepare(request)
 
-                async def _forward_client_to_upstream() -> None:
+                async def _forward_client_to_upstream() -> tuple[str, int, str | bytes]:
                     while True:
                         msg = await ws_response.receive()
                         if msg.type == aiohttp.WSMsgType.TEXT:
@@ -281,10 +285,13 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                         elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
                             code, message = _get_websocket_close_args(msg)
                             return ("upstream", code, message)
-                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            logger.warning("WebSocket client error: %r", _get_websocket_error_detail(msg))
+                            return ("both", aiohttp.WSCloseCode.INTERNAL_ERROR, b"")
+                        elif msg.type == aiohttp.WSMsgType.CLOSED:
                             return ("upstream", aiohttp.WSCloseCode.OK, b"")
 
-                async def _forward_upstream_to_client() -> None:
+                async def _forward_upstream_to_client() -> tuple[str, int, str | bytes]:
                     while True:
                         msg = await ws_upstream.receive()
                         if msg.type == aiohttp.WSMsgType.TEXT:
@@ -294,7 +301,10 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                         elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
                             code, message = _get_websocket_close_args(msg)
                             return ("client", code, message)
-                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            logger.warning("WebSocket upstream error: %r", _get_websocket_error_detail(msg))
+                            return ("both", aiohttp.WSCloseCode.INTERNAL_ERROR, b"")
+                        elif msg.type == aiohttp.WSMsgType.CLOSED:
                             return ("client", aiohttp.WSCloseCode.OK, b"")
 
                 client_task = asyncio.create_task(_forward_client_to_upstream())
@@ -312,9 +322,9 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                     with suppress(asyncio.CancelledError):
                         await task
 
-                if close_target == "upstream":
+                if close_target in ("upstream", "both"):
                     await ws_upstream.close(code=code, message=message)
-                else:
+                if close_target in ("client", "both"):
                     await ws_response.close(code=code, message=message)
                 return ws_response
     except aiohttp.WSServerHandshakeError as exc:
