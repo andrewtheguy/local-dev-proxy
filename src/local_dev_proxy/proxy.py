@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 from fnmatch import fnmatch
 import html
@@ -169,6 +170,12 @@ def _get_websocket_protocols(request: web.Request) -> tuple[str, ...]:
     )
 
 
+def _get_websocket_close_args(msg: aiohttp.WSMessage) -> tuple[int, str | bytes]:
+    code = msg.data if isinstance(msg.data, int) else aiohttp.WSCloseCode.OK
+    message = msg.extra if msg.extra is not None else b""
+    return code, message
+
+
 def make_proxy_app(route_table: RouteTable) -> web.Application:
     app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB
     app["route_table"] = route_table
@@ -258,36 +265,57 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                 headers=ws_headers,
                 origin=request.headers.get("Origin"),
                 protocols=ws_protocols,
+                autoclose=False,
             ) as ws_upstream:
                 response_protocols = (ws_upstream.protocol,) if ws_upstream.protocol else ()
-                ws_response = web.WebSocketResponse(protocols=response_protocols)
+                ws_response = web.WebSocketResponse(protocols=response_protocols, autoclose=False)
                 await ws_response.prepare(request)
 
                 async def _forward_client_to_upstream() -> None:
-                    async for msg in ws_response:
+                    while True:
+                        msg = await ws_response.receive()
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             await ws_upstream.send_str(msg.data)
                         elif msg.type == aiohttp.WSMsgType.BINARY:
                             await ws_upstream.send_bytes(msg.data)
                         elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
-                            await ws_upstream.close()
-                            return
+                            code, message = _get_websocket_close_args(msg)
+                            return ("upstream", code, message)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            return ("upstream", aiohttp.WSCloseCode.OK, b"")
 
                 async def _forward_upstream_to_client() -> None:
-                    async for msg in ws_upstream:
+                    while True:
+                        msg = await ws_upstream.receive()
                         if msg.type == aiohttp.WSMsgType.TEXT:
                             await ws_response.send_str(msg.data)
                         elif msg.type == aiohttp.WSMsgType.BINARY:
                             await ws_response.send_bytes(msg.data)
                         elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
-                            await ws_response.close()
-                            return
+                            code, message = _get_websocket_close_args(msg)
+                            return ("client", code, message)
+                        elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                            return ("client", aiohttp.WSCloseCode.OK, b"")
 
-                await asyncio.gather(
-                    _forward_client_to_upstream(),
-                    _forward_upstream_to_client(),
-                    return_exceptions=True,
+                client_task = asyncio.create_task(_forward_client_to_upstream())
+                upstream_task = asyncio.create_task(_forward_upstream_to_client())
+                done, pending = await asyncio.wait(
+                    {client_task, upstream_task},
+                    return_when=asyncio.FIRST_COMPLETED,
                 )
+
+                close_target, code, message = next(task.result() for task in done)
+
+                for task in pending:
+                    task.cancel()
+                for task in pending:
+                    with suppress(asyncio.CancelledError):
+                        await task
+
+                if close_target == "upstream":
+                    await ws_upstream.close(code=code, message=message)
+                else:
+                    await ws_response.close(code=code, message=message)
                 return ws_response
     except aiohttp.WSServerHandshakeError as exc:
         logger.debug("WebSocket upstream rejected handshake: %s", exc)

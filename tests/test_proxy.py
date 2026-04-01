@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import aiohttp
@@ -351,6 +352,51 @@ async def test_proxy_websocket_forwards_handshake_headers(aiohttp_client: type) 
             msg = await ws.receive()
             assert msg.type == aiohttp.WSMsgType.TEXT
             assert msg.data == "ready"
+    finally:
+        await upstream_server.close()
+
+
+async def test_proxy_websocket_forwards_close_code_and_reason(aiohttp_client: type) -> None:
+    received: dict[str, int | str | None] = {"code": None, "reason": None}
+
+    async def ws_handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        msg = await ws.receive()
+        if msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
+            received["code"] = msg.data
+            received["reason"] = msg.extra
+            code = msg.data if isinstance(msg.data, int) else aiohttp.WSCloseCode.OK
+            message = msg.extra if msg.extra is not None else b""
+            await ws.close(code=code, message=message)
+        return ws
+
+    upstream_app = web.Application()
+    upstream_app.router.add_get("/ws", ws_handler)
+    upstream_server = TestServer(upstream_app)
+    await upstream_server.start_server()
+
+    rt = RouteTable()
+    rt._routes = [
+        ResolvedRoute(
+            id="test-service",
+            host_patterns=("test.localhost",),
+            target_host="127.0.0.1",
+            target_port=upstream_server.port,
+        ),
+    ]
+    rt._portal_html = ""
+
+    proxy_app = make_proxy_app(rt)
+    client = await aiohttp_client(proxy_app)
+    try:
+        async with client.ws_connect("/ws", headers={"Host": "test.localhost"}) as ws:
+            await ws.close(code=4001, message=b"client shutdown")
+        for _ in range(20):
+            if received["code"] is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert received == {"code": 4001, "reason": "client shutdown"}
     finally:
         await upstream_server.close()
 
