@@ -28,12 +28,12 @@ target_host = "127.0.0.1"
 target_port_env = "S3BROWSER_PORT"
 
 [services.minisearch]
-command = ["minisearch", "serve", "--profile", "radio-show", "--bind", "127.0.0.1:{MINISEARCH_PORT}"]
+command = ["minisearch", "serve", "--profile", "nas-server", "--bind", "127.0.0.1:{MINISEARCH_PORT}"]
 env = {MINISEARCH_PORT = "52378"}
 
 [[services.minisearch.routes]]
 id = "minisearch"
-hosts = ["minisearch.localhost"]
+hosts = ["nas-server.minisearch.localhost"]
 target_host = "127.0.0.1"
 target_port_env = "MINISEARCH_PORT"
 
