@@ -7,6 +7,10 @@ import pytest
 from local_dev_proxy.routes import RouteConfigError, load_routes, resolve_command
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SAMPLE_MANIFEST = PROJECT_ROOT / "src/local_dev_proxy/services.toml.sample"
+
+
 SERVICES_TOML = """
 http_port = 2800
 bind = ["127.0.0.1", "::1"]
@@ -49,6 +53,47 @@ def test_manifest_fields(tmp_path: Path) -> None:
     assert manifest.bind == ("127.0.0.1", "::1")
     assert "minio" in manifest.services
     assert "s3browser" in manifest.services
+
+
+def test_bundled_sample_covers_supported_service_and_target_forms() -> None:
+    manifest = load_routes(SAMPLE_MANIFEST)
+    services = manifest.services
+
+    assert services["minio"].command is not None
+    assert services["vite"].command is None
+    assert services["fixed_socket_example"].disabled
+    assert services["worker_example"].disabled
+    assert services["worker_example"].routes == []
+
+    target_forms: set[str] = set()
+    port_target_hosts: set[str | None] = set()
+    has_exact_host = False
+    has_wildcard_host = False
+    for service in services.values():
+        for route in service.routes:
+            if route.target_port is not None:
+                target_forms.add("target_port")
+                port_target_hosts.add(route.target_host)
+            elif route.target_port_env is not None:
+                target_forms.add("target_port_env")
+                port_target_hosts.add(route.target_host)
+            elif route.target_socket is not None:
+                target_forms.add("target_socket")
+            elif route.target_socket_env is not None:
+                target_forms.add("target_socket_env")
+
+            has_exact_host |= any("*" not in host for host in route.hosts)
+            has_wildcard_host |= any("*" in host for host in route.hosts)
+
+    assert target_forms == {
+        "target_port",
+        "target_port_env",
+        "target_socket",
+        "target_socket_env",
+    }
+    assert port_target_hosts == {"localhost", "127.0.0.1", "::1"}
+    assert has_exact_host
+    assert has_wildcard_host
 
 
 def test_manifest_requires_proxy_settings(tmp_path: Path) -> None:

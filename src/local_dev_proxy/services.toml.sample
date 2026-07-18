@@ -1,6 +1,32 @@
+# Required proxy settings. The proxy listens on every address in `bind` using
+# `http_port`; service routes below select the upstream from the request host.
 http_port = 2800
 bind = ["127.0.0.1", "::1"]
 
+# Service forms:
+# - `command` present: managed process, started and stopped by local-dev-proxy.
+# - `command` omitted: unmanaged route to a process started elsewhere.
+# - `disabled = true`: process and routes are inactive but remain in the config.
+# - `env` is optional. Its string values are passed to managed processes and
+#   can be referenced by `{ENV_NAME}` placeholders in individual command args.
+# - `routes` is optional, so a managed process does not have to be proxied.
+#
+# Every route requires `id` and a non-empty `hosts` list. Exact and wildcard
+# hosts can be combined, as the MinIO route demonstrates.
+#
+# Set exactly one upstream target on each route:
+# - `target_port = 3000`                     fixed TCP port
+# - `target_port_env = "APP_PORT"`           TCP port read from service/OS env
+# - `target_socket = "app.sock"`             fixed Unix socket path
+# - `target_socket_env = "APP_SOCKET"`       socket path read from service/OS env
+#
+# TCP routes may set `target_host` to `localhost`, `127.0.0.1`, or `::1`; it
+# defaults to `localhost`. Unix-socket routes must not set `target_host`.
+# Relative socket paths are resolved from the directory containing this file,
+# which is also the working directory used for managed commands.
+
+# Managed service + environment-resolved TCP ports + explicit target host.
+# This also demonstrates multiple routes and exact/wildcard host patterns.
 [services.minio]
 command = ["minio", "server", "data", "--address", ":{MINIO_PORT}", "--console-address", ":{MINIO_CONSOLE_PORT}"]
 env = {MINIO_BROWSER_REDIRECT = "off", MINIO_PORT = "19000", MINIO_CONSOLE_PORT = "19001"}
@@ -17,6 +43,8 @@ hosts = ["minioconsole.localhost"]
 target_host = "127.0.0.1"
 target_port_env = "MINIO_CONSOLE_PORT"
 
+# Managed service + environment-resolved Unix socket. To use the fixed socket
+# form instead, replace `target_socket_env` with `target_socket = "s3browser.sock"`.
 [services.s3browser]
 command = ["s3browser", "server", "--bind", "unix:{S3BROWSER_SOCKET}"]
 env = {S3BROWSER_SOCKET = "s3browser.sock"}
@@ -26,10 +54,12 @@ id = "s3browser"
 hosts = ["s3browser.localhost"]
 target_socket_env = "S3BROWSER_SOCKET"
 
+# Managed service + environment-resolved TCP port. Uncomment `disabled` to
+# demonstrate the disabled state; its process and routes will then be skipped.
 [services.minisearch]
 command = ["minisearch", "serve", "--profile", "nas-server", "--bind", "127.0.0.1:{MINISEARCH_PORT}"]
 env = {MINISEARCH_PORT = "52378"}
-# disabled = true   # turn this service off (skip its process + routes) without deleting its config
+# disabled = true
 
 [[services.minisearch.routes]]
 id = "minisearch"
@@ -37,9 +67,41 @@ hosts = ["nas-server.minisearch.localhost"]
 target_host = "127.0.0.1"
 target_port_env = "MINISEARCH_PORT"
 
+# Unmanaged service + fixed TCP port + default target host (`localhost`).
 [services.vite]
 
 [[services.vite.routes]]
 id = "vite"
 hosts = ["vite.localhost"]
 target_port = 5173
+
+# Managed + fixed Unix-socket variant using a placeholder program. It is
+# disabled so the bundled defaults never try to start the placeholder or expose
+# its route. Replace the command, then remove `disabled` to use it.
+[services.fixed_socket_example]
+command = ["placeholder-http-server", "--unix-socket", "fixed-example.sock"]
+disabled = true
+
+[[services.fixed_socket_example.routes]]
+id = "fixed-socket-example"
+hosts = ["fixed-socket-example.localhost"]
+target_socket = "fixed-example.sock"
+
+# Managed worker with no routes. This demonstrates that process management does
+# not require proxy exposure. Replace the placeholder command and remove
+# `disabled` to use it.
+[services.worker_example]
+command = ["placeholder-worker"]
+disabled = true
+
+# Managed + fixed TCP port + explicit IPv6 loopback target. It is disabled for
+# the same reason as the other placeholder examples.
+[services.ipv6_example]
+command = ["placeholder-http-server", "--host", "::1", "--port", "18080"]
+disabled = true
+
+[[services.ipv6_example.routes]]
+id = "ipv6-example"
+hosts = ["ipv6-example.localhost"]
+target_host = "::1"
+target_port = 18080
