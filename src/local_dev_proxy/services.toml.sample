@@ -7,8 +7,10 @@ bind = ["127.0.0.1", "::1"]
 # - `command` present: managed process, started and stopped by local-dev-proxy.
 # - `command` omitted: unmanaged route to a process started elsewhere.
 # - `disabled = true`: process and routes are inactive but remain in the config.
-# - `env` is optional. Its string values are passed to managed processes and
-#   can be referenced by `{ENV_NAME}` placeholders in individual command args.
+# - `env` is optional. Its string values are passed to managed processes whether
+#   or not they are referenced by `{ENV_NAME}` placeholders in command args.
+# - Managed processes also inherit the OS environment of local-dev-proxy, so a
+#   variable can be omitted from `env` when it is exported before launch.
 # - `routes` is optional, so a managed process does not have to be proxied.
 #
 # Every route requires `id` and a non-empty `hosts` list. Exact and wildcard
@@ -53,6 +55,34 @@ env = {S3BROWSER_SOCKET = "s3browser.sock"}
 id = "s3browser"
 hosts = ["s3browser.localhost"]
 target_socket_env = "S3BROWSER_SOCKET"
+
+# Managed + config-defined Unix-socket environment passthrough. The placeholder
+# server is expected to read EXAMPLE_APP_SOCKET from its environment; the
+# variable does not need to appear in `command`. The route reads the same value
+# to locate the socket. Replace the command, then remove `disabled` to use it.
+[services.env_only_socket_example]
+command = ["placeholder-env-aware-http-server"]
+env = {EXAMPLE_APP_SOCKET = "env-only-example.sock"}
+disabled = true
+
+[[services.env_only_socket_example.routes]]
+id = "env-only-socket-example"
+hosts = ["env-only-socket-example.localhost"]
+target_socket_env = "EXAMPLE_APP_SOCKET"
+
+# Managed + OS-inherited Unix-socket environment passthrough. Before launching
+# local-dev-proxy, export INHERITED_APP_SOCKET with the path the replacement
+# server will read. It is intentionally absent from both `env` and `command`;
+# the managed process inherits it and the route resolves it from the OS env.
+# Replace the command, export the variable, and remove `disabled` to use it.
+[services.inherited_env_socket_example]
+command = ["placeholder-env-aware-http-server"]
+disabled = true
+
+[[services.inherited_env_socket_example.routes]]
+id = "inherited-env-socket-example"
+hosts = ["inherited-env-socket-example.localhost"]
+target_socket_env = "INHERITED_APP_SOCKET"
 
 # Managed service + environment-resolved TCP port. Uncomment `disabled` to
 # demonstrate the disabled state; its process and routes will then be skipped.
