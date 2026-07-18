@@ -33,6 +33,7 @@ class ServiceInfo:
     restart_count: int = 0
     process: subprocess.Popen[bytes] | None = field(default=None, repr=False)
     log_thread: threading.Thread | None = field(default=None, repr=False)
+    log_stop_event: threading.Event | None = field(default=None, repr=False)
 
 
 class ServiceManager:
@@ -117,8 +118,8 @@ class ServiceManager:
             self._require_managed(name)
             self._stop_service_locked(name)
             info = self._services[name]
-            info.restart_count += 1
             self._start_service_locked(name)
+            info.restart_count += 1
 
     def get_status(self) -> list[dict[str, object]]:
         with self._lock:
@@ -156,6 +157,13 @@ class ServiceManager:
         assert info.command is not None, f"Cannot start unmanaged service: {name}"
         if info.status == "running" and info.process and info.process.poll() is None:
             return
+        if info.log_thread is not None:
+            if info.log_thread.is_alive():
+                raise RuntimeError(
+                    f"Cannot start {name}: previous log capture is still active"
+                )
+            info.log_thread = None
+            info.log_stop_event = None
 
         log_path = self.get_log_path(name)
         log_writer = RotatingLogWriter(
@@ -195,14 +203,16 @@ class ServiceManager:
             raise
 
         assert process.stdout is not None
+        log_stop_event = threading.Event()
         log_thread = threading.Thread(
             target=self._pump_service_log,
-            args=(process.stdout, log_writer),
+            args=(process.stdout, log_writer, log_stop_event),
             name=f"{name}-log-writer",
             daemon=True,
         )
         info.process = process
         info.log_thread = log_thread
+        info.log_stop_event = log_stop_event
         info.pid = process.pid
         info.status = "running"
         info.exit_code = None
@@ -211,9 +221,11 @@ class ServiceManager:
 
     @staticmethod
     def _pump_service_log(
-        source: BinaryIO, writer: RotatingLogWriter
+        source: BinaryIO,
+        writer: RotatingLogWriter,
+        stop_event: threading.Event,
     ) -> None:
-        pump_log_stream(source, writer)
+        pump_log_stream(source, writer, stop_event)
 
     @staticmethod
     def _finish_log_capture(info: ServiceInfo) -> None:
@@ -221,14 +233,15 @@ class ServiceManager:
         if thread is None:
             return
         thread.join(timeout=5)
-        if thread.is_alive() and info.process is not None:
-            stream = info.process.stdout
-            if stream is not None:
-                stream.close()
+        if thread.is_alive():
+            if info.log_stop_event is not None:
+                info.log_stop_event.set()
             thread.join(timeout=1)
         if thread.is_alive():
             logger.warning("Log writer for service %s did not stop", info.name)
+            return
         info.log_thread = None
+        info.log_stop_event = None
 
     def _stop_service_locked(self, name: str) -> None:
         info = self._services[name]

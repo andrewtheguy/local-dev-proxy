@@ -87,13 +87,25 @@ class RotatingLogWriter:
         self.close()
 
 
-def pump_log_stream(source: BinaryIO, writer: RotatingLogWriter) -> None:
+def pump_log_stream(
+    source: BinaryIO,
+    writer: RotatingLogWriter,
+    stop_event: threading.Event | None = None,
+) -> None:
     """Drain a pipe into a rotating writer until every available byte is read."""
     write_enabled = True
+    if stop_event is not None:
+        os.set_blocking(source.fileno(), False)
     try:
         while True:
+            if stop_event is not None and stop_event.is_set():
+                break
             try:
                 chunk = os.read(source.fileno(), _READ_SIZE)
+            except BlockingIOError:
+                assert stop_event is not None
+                stop_event.wait(timeout=0.05)
+                continue
             except OSError:
                 break
             if not chunk:
