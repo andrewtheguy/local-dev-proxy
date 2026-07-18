@@ -23,6 +23,11 @@ _DOCK_ICON_RESOURCE = "assets/dock-icon.png"
 LOCK_PATH = os.path.join(tempfile.gettempdir(), "local-dev-proxy.lock")
 PID_PATH = os.path.join(tempfile.gettempdir(), "local-dev-proxy.pid")
 
+# Cross-platform "raise the running window" request. A second launch drops this
+# marker; the running manager polls for it and un-hides its window. Replaces the
+# Unix-only SIGUSR1 path so the same mechanism works on Windows.
+RAISE_REQUEST_PATH = os.path.join(tempfile.gettempdir(), "local-dev-proxy.raise")
+
 
 class AlreadyRunningError(RuntimeError):
     """Raised when the single-instance lock is already held by another manager."""
@@ -75,6 +80,20 @@ def manager_pid() -> int | None:
 
 def manager_running() -> bool:
     return manager_pid() is not None
+
+
+def request_raise() -> None:
+    """Ask the running manager to raise its window (cross-platform SIGUSR1)."""
+    Path(RAISE_REQUEST_PATH).write_text(str(os.getpid()))
+
+
+def consume_raise_request() -> bool:
+    """Return True (clearing the request) if a raise was requested since last call."""
+    try:
+        os.remove(RAISE_REQUEST_PATH)
+    except OSError:
+        return False
+    return True
 
 
 @dataclass(frozen=True)
@@ -154,7 +173,7 @@ def _cached_icon(resource_name: str, cache_name: str) -> Path | None:
 
 
 def icon_path() -> Path | None:
-    """Return a filesystem path to the bundled menu-bar (tray) icon, or None."""
+    """Return a filesystem path to the bundled system-tray icon, or None."""
     return _cached_icon(_ICON_RESOURCE, "tray-icon.png")
 
 

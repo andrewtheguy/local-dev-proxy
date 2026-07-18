@@ -1,0 +1,327 @@
+import { TabWidget, Button, ListView, TextEdit, ComboBox, SpinBox, CheckBox, GroupBox } from "std-widgets.slint";
+
+// One row of the Services table.
+export struct ServiceRow {
+    name: string,
+    status: string,
+    pid: string,
+    restarts: string,
+    exit: string,
+}
+
+// One row of the (flat, grouped) Routes list. `kind` is service-header | route | note.
+export struct RouteRow {
+    kind: string,
+    text: string,
+    url: string,
+    target: string,
+    muted: bool,
+}
+
+export component MainWindow inherits Window {
+    title: "Local Dev Proxy — Manager v" + root.version;
+    icon: root.app_icon;
+    preferred-width: 760px;
+    preferred-height: 560px;
+    min-width: 560px;
+    min-height: 400px;
+    default-font-size: 13px;
+
+    // --- inputs from the Python controller ---
+    in property <string> version;
+    in property <image> app_icon;
+    in property <bool> editing;                 // true while config is being edited
+    in property <string> view: "services";      // services | readonly | edit
+    in property <string> banner;                // Services-tab error/mode message
+    in property <string> status_text;
+    in property <int> status_level;             // 0 neutral, 1 success, 2 error
+
+    in property <[ServiceRow]> service_rows;
+    in-out property <int> selected_row: -1;
+    in property <bool> can_start;
+    in property <bool> can_stop;
+    in property <bool> can_restart;
+    in property <string> sel_caption: "Selected service — click a row to control it";
+
+    in-out property <string> config_text;
+    in property <bool> dirty;
+
+    in property <[string]> log_services;
+    in-out property <int> log_current: -1;
+    in-out property <int> log_lines: 200;
+    in-out property <bool> log_follow;
+    in property <string> log_text;
+
+    in property <[RouteRow]> route_rows;
+    in property <string> routes_banner;
+
+    // --- callbacks into the Python controller ---
+    callback quit();
+    callback show_readonly();
+    callback show_services();
+    callback stop_to_edit();
+    callback start_all();
+    callback validate();
+    callback save();
+    callback reload_file();
+    callback start_service();
+    callback stop_service();
+    callback restart_service();
+    callback row_selected(int);
+    callback config_edited();
+    callback select_log(int);
+    callback follow_toggled(bool);
+    callback refresh_logs();
+    callback reload_routes();
+    callback open_url(string);
+
+    function status_color() -> brush {
+        root.status_level == 1 ? #007000 : root.status_level == 2 ? #b00000 : #303030
+    }
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 6px;
+
+        // Toolbar: version (left), Quit (right).
+        HorizontalLayout {
+            Text { text: "v" + root.version; color: #888888; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+            Button { text: "Quit"; clicked => { root.quit(); } }
+        }
+
+        TabWidget {
+            Tab {
+                title: "Services";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 4px;
+
+                    if root.banner != "": Text {
+                        text: root.banner;
+                        color: #b00000;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        if root.view == "services": Button {
+                            text: "View Config";
+                            clicked => { root.show_readonly(); }
+                        }
+                        if root.view == "readonly": Button {
+                            text: "Back to Services";
+                            clicked => { root.show_services(); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text {
+                            text: root.status_text;
+                            color: root.status-color();
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    // --- services list view ---
+                    if root.view == "services": VerticalLayout {
+                        spacing: 4px;
+                        Rectangle {
+                            height: 24px;
+                            background: #ececec;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                spacing: 8px;
+                                Text { text: "service"; width: 150px; font-weight: 700; vertical-alignment: center; }
+                                Text { text: "status"; width: 90px; font-weight: 700; vertical-alignment: center; }
+                                Text { text: "pid"; width: 70px; font-weight: 700; vertical-alignment: center; }
+                                Text { text: "restarts"; width: 70px; font-weight: 700; vertical-alignment: center; }
+                                Text { text: "exit"; width: 70px; font-weight: 700; vertical-alignment: center; }
+                            }
+                        }
+                        ListView {
+                            vertical-stretch: 1;
+                            for row[idx] in root.service_rows: Rectangle {
+                                height: 26px;
+                                background: idx == root.selected_row ? #cfe0f5 : transparent;
+                                TouchArea {
+                                    clicked => { root.selected_row = idx; root.row_selected(idx); }
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        spacing: 8px;
+                                        Text { text: row.name; width: 150px; vertical-alignment: center; }
+                                        Text { text: row.status; width: 90px; vertical-alignment: center; }
+                                        Text { text: row.pid; width: 70px; vertical-alignment: center; }
+                                        Text { text: row.restarts; width: 70px; vertical-alignment: center; }
+                                        Text { text: row.exit; width: 70px; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+                        }
+                        GroupBox {
+                            title: root.sel_caption;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Button { text: "Start"; enabled: root.can_start; clicked => { root.start_service(); } }
+                                Button { text: "Stop"; enabled: root.can_stop; clicked => { root.stop_service(); } }
+                                Button { text: "Restart"; enabled: root.can_restart; clicked => { root.restart_service(); } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+
+                    // --- read-only config view ---
+                    if root.view == "readonly": VerticalLayout {
+                        spacing: 6px;
+                        TextEdit {
+                            vertical-stretch: 1;
+                            text: root.config_text;
+                            read-only: true;
+                        }
+                        HorizontalLayout {
+                            Button { text: "Stop All & Edit Config"; clicked => { root.stop_to_edit(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+
+                    // --- editable config view ---
+                    if root.view == "edit": VerticalLayout {
+                        spacing: 6px;
+                        TextEdit {
+                            vertical-stretch: 1;
+                            text <=> root.config_text;
+                            edited => { root.config_edited(); }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Button { text: "Start All"; clicked => { root.start_all(); } }
+                            Button { text: "Validate"; clicked => { root.validate(); } }
+                            Button { text: "Save"; clicked => { root.save(); } }
+                            Button { text: "Reload from disk"; clicked => { root.reload_file(); } }
+                            Rectangle { horizontal-stretch: 1; }
+                            if root.dirty: Text {
+                                text: "● unsaved changes";
+                                color: #b26a00;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "Logs";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+                    if root.editing: Text {
+                        text: "Services are stopped — start them (Services tab) to view logs.";
+                        color: #888888;
+                    }
+                    if !root.editing: HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "Service:"; vertical-alignment: center; }
+                        ComboBox {
+                            min-width: 180px;
+                            model: root.log_services;
+                            current-index <=> root.log_current;
+                            selected => { root.select_log(self.current-index); }
+                        }
+                        Text { text: "Lines:"; vertical-alignment: center; }
+                        SpinBox {
+                            minimum: 10;
+                            maximum: 5000;
+                            value <=> root.log_lines;
+                        }
+                        CheckBox {
+                            text: "Follow";
+                            checked <=> root.log_follow;
+                            toggled => { root.follow_toggled(self.checked); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Button { text: "Refresh"; clicked => { root.refresh_logs(); } }
+                    }
+                    if !root.editing: TextEdit {
+                        vertical-stretch: 1;
+                        text: root.log_text;
+                        read-only: true;
+                    }
+                }
+            }
+
+            Tab {
+                title: "Routes";
+                VerticalLayout {
+                    padding: 8px;
+                    spacing: 6px;
+                    if root.editing: Text {
+                        text: "Services are stopped — start them (Services tab) to view routes.";
+                        color: #888888;
+                    }
+                    if !root.editing: Text {
+                        text: "Routes grouped by service — click a URL row to open it in your browser.";
+                        wrap: word-wrap;
+                    }
+                    if !root.editing: ListView {
+                        vertical-stretch: 1;
+                        for row in root.route_rows: Rectangle {
+                            height: 24px;
+                            TouchArea {
+                                mouse-cursor: row.url != "" ? pointer : default;
+                                clicked => { if (row.url != "") { root.open_url(row.url); } }
+                                HorizontalLayout {
+                                    padding-left: row.kind == "route" ? 24px : 8px;
+                                    spacing: 8px;
+                                    Text {
+                                        text: row.text;
+                                        width: 240px;
+                                        font-weight: row.kind == "service-header" ? 700 : 400;
+                                        color: row.muted ? #999999 : #000000;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: row.url;
+                                        width: 260px;
+                                        color: row.muted ? #999999 : #0055cc;
+                                        vertical-alignment: center;
+                                    }
+                                    Text {
+                                        text: row.target;
+                                        color: #444444;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !root.editing: HorizontalLayout {
+                        Button { text: "Reload"; clicked => { root.reload_routes(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                        if root.routes_banner != "": Text {
+                            text: root.routes_banner;
+                            color: #b00000;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+export component TrayIcon inherits SystemTrayIcon {
+    in property <image> tray_icon;
+    icon: root.tray_icon;
+    tooltip: "Local Dev Proxy";
+
+    callback open_window();
+    callback quit_app();
+
+    Menu {
+        MenuItem {
+            title: "Open Manager";
+            activated => { root.open_window(); }
+        }
+        MenuItem {
+            title: "Quit";
+            activated => { root.quit_app(); }
+        }
+    }
+}

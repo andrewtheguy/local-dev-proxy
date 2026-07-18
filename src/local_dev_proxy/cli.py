@@ -1,24 +1,22 @@
 from __future__ import annotations
 
-import os
-import signal
 import subprocess
 import sys
 import time
 
 import typer
 
-from .config import ensure_config, manager_pid
+from .config import ensure_config, manager_pid, request_raise
 
 app = typer.Typer(
-    help="Local dev proxy: reverse proxy + process manager with a Tkinter manager UI.",
+    help="Local dev proxy: reverse proxy + process manager with a Slint manager UI.",
     invoke_without_command=True,
     no_args_is_help=False,
 )
 
 
 def _spawn_detached() -> int | None:
-    """Launch the app (proxy + services + window + menu-bar icon) detached.
+    """Launch the app (proxy + services + window + system-tray icon) detached.
 
     Re-execs ``python -m local_dev_proxy --foreground`` in a new session with
     output redirected to the log dir, then waits briefly for the single-instance
@@ -67,13 +65,11 @@ def main(
 
     pid = manager_pid()
     if pid is not None:
-        try:
-            os.kill(pid, signal.SIGUSR1)  # ask the running app to raise its window
-        except ProcessLookupError:
-            pass  # stale PID (process gone); fall through to a fresh spawn
-        else:
-            typer.echo(f"local-dev-proxy is already running (PID {pid}).")
-            return
+        # Ask the running app to raise its window (cross-platform, via a marker
+        # file the manager polls — replaces the Unix-only SIGUSR1 signal).
+        request_raise()
+        typer.echo(f"local-dev-proxy is already running (PID {pid}).")
+        return
 
     pid = _spawn_detached()
     if pid is None:

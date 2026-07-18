@@ -8,12 +8,14 @@ version = "0.0.2"
 description = "Local dev orchestration with built-in reverse proxy and zellij services"
 authors = [{ name = "Andrew Chen", email = "hello@andrewtheguy.com" }]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
   "typer>=0.12.0",
   "aiohttp>=3.9.0",
-  "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
   "filelock>=3.31.0",
+  # Cross-platform GUI + system tray (SystemTrayIcon is new in 1.17, currently
+  # only in the beta binding). Ships its own per-OS binary wheel.
+  "slint==1.17.1b2",
 ]
 
 [project.scripts]
@@ -32,9 +34,10 @@ default-groups = ["dev"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/local_dev_proxy"]
-# Ship bundled runtime resources (tray icon + sample config) inside the wheel.
+# Ship bundled runtime resources (icons, Slint UI, sample config) inside the wheel.
 artifacts = [
   "src/local_dev_proxy/assets/*",
+  "src/local_dev_proxy/ui/*.slint",
   "src/local_dev_proxy/services.toml.sample",
 ]
 
@@ -43,12 +46,11 @@ pythonpath = ["src"]
 asyncio_mode = "auto"
 
 [tool.pyright]
-# gui.py (Tkinter) and status_item.py (pyobjc/AppKit) wrap dynamic native
-# toolkits with no type stubs, so they are excluded from static checking.
+# gui.py wraps Slint's dynamically generated component classes, which have no
+# type stubs, so it is excluded from static checking.
 exclude = [
     ".venv", "build", "dist", ".git", "tests", "tmp",
     "src/local_dev_proxy/gui.py",
-    "src/local_dev_proxy/status_item.py",
 ]
 reportUnknownParameterType = true
 reportUninitializedInstanceVariable = true

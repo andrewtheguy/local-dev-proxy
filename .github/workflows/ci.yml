@@ -11,9 +11,14 @@ permissions:
 
 jobs:
   build:
-    # macOS runner: the app targets macOS (pyobjc menu-bar item, Tk manager UI),
-    # so the platform-conditional dependencies only install here.
-    runs-on: macos-latest
+    # The app is cross-platform (Slint window + system tray), so lint, type-check,
+    # and tests run on all three desktop OSes. (There are no GUI tests; these
+    # steps exercise the proxy/config/routes logic, which must pass everywhere.)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
