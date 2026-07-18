@@ -215,13 +215,19 @@ class ManagerApp:
 
 
 class ServicesTab(ttk.Frame):
-    """Combined services + config tab.
+    """Combined services + config tab, with three stacked views:
 
-    While services are running it shows the live status list with per-service
-    Start / Stop / Restart for the selected row. **Stop All & Edit Config** stops
-    everything and swaps the body to the ``services.toml`` editor; **Start All**
-    validates, saves, and starts, swapping back to the list. The active view
-    mirrors ``app.running``.
+    * **services** — the live status list with per-service Start / Stop /
+      Restart for the selected row (services running).
+    * **readonly** — a read-only look at ``services.toml`` while services keep
+      running. The top toggle flips between this and **services** without ever
+      stopping anything; this view's own **Stop All & Edit Config** button is
+      the only thing that stops services and opens the editor.
+    * **edit** — the editable ``services.toml`` (services stopped); **Start All**
+      validates, saves, and starts, returning to **services**.
+
+    ``services``/``edit`` mirror ``app.running``; ``readonly`` is a UI-only
+    detour available while running.
     """
 
     COLUMNS = ("status", "pid", "restarts", "exit")
@@ -231,22 +237,25 @@ class ServicesTab(ttk.Frame):
     def __init__(self, master: tk.Misc, app: ManagerApp) -> None:
         super().__init__(master, padding=8)
         self._app = app
-        self._mode: bool | None = None  # last-applied app.running; None until first refresh
+        self._view: str | None = None  # "services" | "readonly" | "edit"; None until first refresh
+        self._last_running: bool | None = None  # detects external run-state changes in refresh()
 
         self._banner = ttk.Label(self, text="", foreground="#b00")
         self._banner.pack(fill="x", pady=(0, 4))
 
         lifecycle = ttk.Frame(self)
         lifecycle.pack(fill="x", pady=(0, 4))
-        self._toggle_btn = ttk.Button(lifecycle, text="Stop All & Edit Config", command=self._toggle)
+        # Label + command are set per-view by _set_view(); this is just a placeholder.
+        self._toggle_btn = ttk.Button(lifecycle, text="View Config", command=self._show_readonly)
         self._toggle_btn.pack(side="left")
         self._status = ttk.Label(lifecycle, text="")
         self._status.pack(side="right")
 
-        # Two stacked views; refresh() packs exactly one, based on the mode.
+        # Three stacked views; _set_view() packs exactly one.
         self._body = ttk.Frame(self)
         self._body.pack(fill="both", expand=True)
         self._service_view = self._build_service_view(self._body)
+        self._readonly_view = self._build_readonly_view(self._body)
         self._edit_view = self._build_edit_view(self._body)
 
         self._load_file()
@@ -301,6 +310,32 @@ class ServicesTab(ttk.Frame):
         else:
             self._sel_frame.config(text=f"Selected service: {name} ({status} — not controllable)")
 
+    def _build_readonly_view(self, parent: tk.Misc) -> ttk.Frame:
+        view = ttk.Frame(parent)
+
+        # Bottom-pinned action bar (like the editor) so the CTA stays visible.
+        actions = ttk.Frame(view)
+        actions.pack(side="bottom", fill="x", pady=(6, 0))
+        self._edit_config_btn = ttk.Button(
+            actions, text="Stop All & Edit Config", command=self._stop_to_edit
+        )
+        self._edit_config_btn.pack(side="left")
+
+        self._ro_text = tk.Text(view, wrap="none", height=22, font=("Menlo", 11))
+        self._ro_text.pack(side="top", fill="both", expand=True)
+        self._ro_text.config(state="disabled")
+        return view
+
+    def _load_readonly(self) -> None:
+        try:
+            content = self._app.paths.services_file.read_text()
+        except OSError as exc:
+            content = f"# read error: {exc}"
+        self._ro_text.config(state="normal")
+        self._ro_text.delete("1.0", "end")
+        self._ro_text.insert("1.0", content)
+        self._ro_text.config(state="disabled")
+
     def _build_edit_view(self, parent: tk.Misc) -> ttk.Frame:
         view = ttk.Frame(parent)
 
@@ -335,39 +370,57 @@ class ServicesTab(ttk.Frame):
 
     # --- mode / refresh -------------------------------------------------------
 
-    def _apply_mode(self, running: bool) -> None:
-        """Swap the body between the service list and the config editor."""
-        if running:
-            self._edit_view.pack_forget()
+    def _set_view(self, view: str) -> None:
+        """Swap the body to one of the service list / read-only config / editor."""
+        self._view = view
+        for v in (self._service_view, self._readonly_view, self._edit_view):
+            v.pack_forget()
+        if view == "services":
             self._service_view.pack(fill="both", expand=True)
-            self._toggle_btn.config(text="Stop All & Edit Config")
+            self._toggle_btn.config(text="View Config", command=self._show_readonly)
             self._banner.config(text="")
-        else:
-            self._service_view.pack_forget()
+        elif view == "readonly":
+            self._load_readonly()  # reflect the current on-disk config
+            self._readonly_view.pack(fill="both", expand=True)
+            self._toggle_btn.config(text="Back to Services", command=self._show_services)
+            self._banner.config(
+                text="Viewing configuration (read-only) — services still running."
+            )
+        else:  # edit
+            self._load_file()  # reflect any on-disk changes when entering edit mode
             self._edit_view.pack(fill="both", expand=True)
-            self._toggle_btn.config(text="Start All")
+            self._toggle_btn.config(text="Start All", command=self._start_all)
             self._banner.config(
                 text="Editing configuration — Start All to validate, save, and launch."
             )
-        # Logs/Routes are meaningful only while services run.
-        self._app.set_editing(not running)
+        # Logs/Routes are meaningful only while services run (i.e. not in edit mode).
+        self._app.set_editing(view == "edit")
 
     def refresh(self, reschedule: bool = True) -> None:
         running = self._app.running
-        if running != self._mode:
-            self._apply_mode(running)
-            self._mode = running
+        # A change in run-state (incl. the first refresh) picks the natural view:
+        # running -> the service list, stopped -> the editor. The read-only detour
+        # is reachable only by the user and never survives a run-state change.
+        if running != self._last_running:
+            self._set_view("services" if running else "edit")
+            self._last_running = running
 
-        if running:
+        if self._view == "services":
             self._sync_tree(self._app.service_manager)
             self._update_service_controls()
-        else:
+        elif self._view == "edit":
             self._text.config(state="normal")
             for btn in (self._validate_btn, self._save_btn):
                 btn.state(["!disabled"])
 
         if reschedule:
             self.after(_POLL_MS, self.refresh)
+
+    def _show_readonly(self) -> None:
+        self._set_view("readonly")
+
+    def _show_services(self) -> None:
+        self._set_view("services")
 
     def _sync_tree(self, sm: ServiceManager | None) -> None:
         """Update tree rows in place (keyed by service name) so the user's
@@ -413,17 +466,11 @@ class ServicesTab(ttk.Frame):
 
     # --- lifecycle toggle -----------------------------------------------------
 
-    def _toggle(self) -> None:
-        if self._app.running:
-            self._stop_to_edit()
-        else:
-            self._start_all()
-
     def _stop_to_edit(self) -> None:
         self._status.config(text="stopping…", foreground="#000")
         self._app.stop_services()
-        self._load_file()  # reflect any on-disk changes when entering edit mode
         self._status.config(text="stopped — editing", foreground="#000")
+        # running is now False, so refresh() switches to the editor (loading the file).
         self.refresh(reschedule=False)
 
     def _start_all(self) -> None:
