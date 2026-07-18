@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtGui import QColor, QImage, QPalette
+from PySide6.QtGui import QColor, QImage, QPalette, QTextDocument
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
 from local_dev_proxy import config as config_module
 from local_dev_proxy.config import ProjectPaths
-from local_dev_proxy.gui import ManagerController, _tail_file
+from local_dev_proxy.gui import ManagerController, _tail_file, _TomlSyntaxHighlighter
 from local_dev_proxy.routes import load_routes
 
 
@@ -164,12 +164,53 @@ def _find_first_url(model: object, parent: QModelIndex = QModelIndex()) -> QMode
     return QModelIndex()
 
 
+def _highlight_color_at(
+    document: QTextDocument, block_number: int, position: int
+) -> QColor:
+    block = document.findBlockByNumber(block_number)
+    layout = block.layout()
+    assert layout is not None
+    for format_range in layout.formats():
+        if format_range.start <= position < format_range.start + format_range.length:
+            return format_range.format.foreground().color()
+    raise AssertionError(
+        f"No syntax format at block {block_number}, position {position}"
+    )
+
+
 def test_tail_file_reads_only_requested_lines(tmp_path: Path) -> None:
     log = tmp_path / "service.log"
     log.write_text("one\ntwo\nthree\nfour\n")
     assert _tail_file(log, 2) == "three\nfour\n"
     assert _tail_file(log, 0) == ""
     assert _tail_file(tmp_path / "missing.log", 20) == ""
+
+
+def test_toml_syntax_highlighting(qtbot: object) -> None:
+    editor = QPlainTextEdit()
+    qtbot.addWidget(editor)
+    highlighter = _TomlSyntaxHighlighter(editor.document())
+    editor.setPlainText(
+        'port = 2800 # note\n'
+        '[services.demo]\n'
+        'name = "value#inside"\n'
+        'enabled = true\n'
+        'description = """first\n'
+        '# still string\n'
+        'last""" # comment'
+    )
+    highlighter.rehighlight()
+
+    document = editor.document()
+    assert highlighter.document() is document
+    assert _highlight_color_at(document, 0, 0) == QColor("#175cd3")
+    assert _highlight_color_at(document, 0, 7) == QColor("#b54708")
+    assert _highlight_color_at(document, 0, 12) == QColor("#667085")
+    assert _highlight_color_at(document, 1, 0) == QColor("#6941c6")
+    assert _highlight_color_at(document, 2, 13) == QColor("#067647")
+    assert _highlight_color_at(document, 3, 10) == QColor("#b54708")
+    assert _highlight_color_at(document, 5, 0) == QColor("#067647")
+    assert _highlight_color_at(document, 6, 8) == QColor("#667085")
 
 
 def test_macos_tray_icon_is_white_with_identical_alpha_mask() -> None:
@@ -301,6 +342,7 @@ def test_all_manager_flows_with_screenshots(
     qtbot.mouseClick(window.view_config_button, Qt.MouseButton.LeftButton)
     assert window.services_stack.currentWidget() is window.readonly_view
     assert window.readonly_config.toPlainText() == original_config.decode()
+    assert window.readonly_highlighter.document() is window.readonly_config.document()
     assert window.readonly_config.palette().color(QPalette.ColorRole.Base) == QColor(
         "#f2f4f7"
     )
@@ -327,6 +369,7 @@ def test_all_manager_flows_with_screenshots(
 
     qtbot.mouseClick(window.edit_config_button, Qt.MouseButton.LeftButton)
     assert window.services_stack.currentWidget() is window.editor_view
+    assert window.editor_highlighter.document() is window.config_editor.document()
     assert not controller.running
     assert not window.tabs.isTabEnabled(window.tabs.indexOf(window.logs_tab))
     assert proxies[0].stopped
