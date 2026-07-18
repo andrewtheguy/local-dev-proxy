@@ -7,13 +7,18 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QPalette, QTextDocument
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPalette, QTextDocument
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QPlainTextEdit, QSystemTrayIcon
 
 from local_dev_proxy import config as config_module
 from local_dev_proxy.config import ProjectPaths
-from local_dev_proxy.gui import ManagerController, _tail_file, _TomlSyntaxHighlighter
+from local_dev_proxy.gui import (
+    ManagerController,
+    ManagerWindow,
+    _tail_file,
+    _TomlSyntaxHighlighter,
+)
 from local_dev_proxy.routes import load_routes
 
 
@@ -134,15 +139,18 @@ class FakeProxy:
 
 
 @pytest.fixture
-def isolated_configtest(tmp_path: Path) -> Iterator[tuple[Path, bytes]]:
-    configtest = tmp_path / "configtest.toml"
-    shutil.copyfile(CONFIGTEST_FIXTURE, configtest)
-    original = configtest.read_bytes()
+def isolated_configtest(tmp_path: Path) -> Iterator[tuple[ProjectPaths, bytes]]:
+    paths = ProjectPaths(tmp_path / "test-profile")
+    paths.root.mkdir(parents=True)
+    shutil.copyfile(CONFIGTEST_FIXTURE, paths.services_file)
+    original = paths.services_file.read_bytes()
     try:
-        yield configtest, original
+        yield paths, original
     finally:
-        configtest.write_bytes(original)
-        configtest.with_name(f"{configtest.name}.tmp").unlink(missing_ok=True)
+        paths.services_file.write_bytes(original)
+        paths.services_file.with_name(
+            f"{paths.services_file.name}.tmp"
+        ).unlink(missing_ok=True)
 
 
 def _find_service_row(controller: ManagerController, name: str) -> int:
@@ -218,6 +226,17 @@ def test_toml_syntax_highlighting(qtbot: object) -> None:
     assert _highlight_color_at(document, 7, 8) == QColor("#667085")
 
 
+def test_window_closes_normally_when_no_tray_is_available(qtbot: object) -> None:
+    window = ManagerWindow(QIcon())
+    qtbot.addWidget(window)
+    window.set_hide_on_close(False)
+    window.show()
+
+    window.close()
+
+    assert not window.isVisible()
+
+
 def test_macos_tray_icon_is_white_with_identical_alpha_mask() -> None:
     original = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"))
     macos = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon-macos.png"))
@@ -253,22 +272,14 @@ def test_macos_selects_white_tray_icon(
 
 def test_all_manager_flows_with_screenshots(
     qtbot: object,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    isolated_configtest: tuple[Path, bytes],
+    isolated_configtest: tuple[ProjectPaths, bytes],
 ) -> None:
-    configtest, original_config = isolated_configtest
-    monkeypatch.setenv("LOCAL_DEV_PROXY_CONFIG_DIR", str(tmp_path / "icon-cache"))
+    paths, original_config = isolated_configtest
+    configtest = paths.services_file
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
     opened_urls: list[str] = []
     managers: list[FakeServiceManager] = []
     proxies: list[FakeProxy] = []
-
-    paths = ProjectPaths(
-        config_dir=configtest.parent,
-        services_file=configtest,
-        logs_dir=tmp_path / "logs",
-    )
 
     def service_factory(factory_paths: ProjectPaths) -> FakeServiceManager:
         manager = FakeServiceManager(factory_paths)
@@ -282,7 +293,6 @@ def test_all_manager_flows_with_screenshots(
 
     controller = ManagerController(
         paths,
-        lock=None,
         application=QApplication.instance(),
         service_factory=service_factory,
         proxy_factory=proxy_factory,
@@ -492,6 +502,13 @@ def test_all_manager_flows_with_screenshots(
     window.close()
     qtbot.waitUntil(lambda: not window.isVisible(), timeout=2000)
     assert not controller._quitting
+
+    # A normal tray click only opens the platform menu. It must not also restore
+    # the manager window (macOS emits Trigger while displaying the menu).
+    controller._tray_activated(QSystemTrayIcon.ActivationReason.Trigger)
+    qtbot.wait(30)
+    assert not window.isVisible()
+
     controller.open_action.trigger()
     qtbot.waitUntil(window.isVisible, timeout=2000)
     screenshot("14-restored-from-tray")
@@ -505,13 +522,10 @@ def test_all_manager_flows_with_screenshots(
 
 def test_tray_quit_action_uses_full_cleanup(
     qtbot: object,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    isolated_configtest: tuple[Path, bytes],
+    isolated_configtest: tuple[ProjectPaths, bytes],
 ) -> None:
-    configtest, original_config = isolated_configtest
-    monkeypatch.setenv("LOCAL_DEV_PROXY_CONFIG_DIR", str(tmp_path / "icon-cache"))
-    paths = ProjectPaths(configtest.parent, configtest, tmp_path / "logs")
+    paths, original_config = isolated_configtest
+    configtest = paths.services_file
     proxies: list[FakeProxy] = []
 
     def proxy_factory(_paths: ProjectPaths) -> FakeProxy:
@@ -521,7 +535,6 @@ def test_tray_quit_action_uses_full_cleanup(
 
     controller = ManagerController(
         paths,
-        lock=None,
         application=QApplication.instance(),
         service_factory=FakeServiceManager,
         proxy_factory=proxy_factory,

@@ -11,7 +11,7 @@ def start_services_managed(paths: ProjectPaths) -> ServiceManager:
     return ServiceManager(
         manifest,
         log_dir=paths.logs_dir,
-        cwd=paths.config_dir,
+        cwd=paths.root,
     )
 
 

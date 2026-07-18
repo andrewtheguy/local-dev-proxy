@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "local-dev-proxy"
-version = "0.0.5"
+version = "0.0.6"
 description = "Local development process orchestration with a built-in reverse proxy and manager UI"
 authors = [{ name = "Andrew Chen", email = "hello@andrewtheguy.com" }]
 readme = "README.md"
 requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
-  "typer>=0.12.0",
   "aiohttp>=3.9.0",
   "filelock>=3.31.0",
   # Official Qt 6 Python bindings. The wheels include the cross-platform Qt
@@ -18,8 +19,12 @@ dependencies = [
   "PySide6>=6.9.0,<7",
 ]
 
-[project.scripts]
-local-dev-proxy = "local_dev_proxy.cli:app"
+[project.gui-scripts]
+local-dev-proxy = "local_dev_proxy.gui:run_gui"
+
+[project.urls]
+Homepage = "https://github.com/andrewtheguy/local-dev-proxy"
+Repository = "https://github.com/andrewtheguy/local-dev-proxy"
 
 [dependency-groups]
 dev = [
@@ -40,6 +45,21 @@ artifacts = [
   "src/local_dev_proxy/assets/*",
   "src/local_dev_proxy/services.toml.sample",
 ]
+
+[tool.briefcase]
+project_name = "Local Dev Proxy"
+bundle = "com.andrewtheguy"
+
+[tool.briefcase.app.local-dev-proxy]
+formal_name = "Local Dev Proxy"
+description = "Local reverse proxy and development process manager."
+long_description = "Local development process orchestration with a built-in reverse proxy and manager UI."
+sources = ["src/local_dev_proxy"]
+icon = "src/local_dev_proxy/assets/dock-icon"
+
+[tool.briefcase.app.local-dev-proxy.macOS]
+min_os_version = "13.0"
+universal_build = false
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -66,5 +86,3 @@ reportMissingImports = true
 reportMissingModuleSource = false
 reportUnusedCallResult = false
 reportImplicitOverride = false
-# typer's API relies on function calls (Option/Argument) as parameter defaults.
-reportCallInDefaultInitializer = false

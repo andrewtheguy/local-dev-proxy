@@ -1,17 +1,34 @@
 Local dev proxy: built-in reverse proxy + process manager with a cross-platform manager window and a system-tray app.
 
 > **No backward compatibility while on `v0.0.x`.** Any release may make breaking changes to
-> the config format, CLI, or behavior without a deprecation path. Pin to an exact version.
+> the configuration format or behavior without a deprecation path. Pin to an exact version.
 
 ## Installation
 
 Cross-platform (macOS, Windows, Linux) — the manager window and system-tray icon
-are built with [PySide6 / Qt 6](https://doc.qt.io/qtforpython-6/). Requires Python 3.13+.
+are built with [PySide6 / Qt 6](https://doc.qt.io/qtforpython-6/).
 
-### Install from a release wheel (recommended)
+### Install the native desktop application (recommended)
 
-Install directly from a release asset URL — no checkout, no index config. Grab the wheel
-URL from the [Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
+Download the matching installer from the
+[Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
+
+- **macOS 13 or newer (Apple silicon/ARM64 only):** download the `.dmg`, open it, and copy
+  **Local Dev Proxy.app** to **Applications**.
+- **Windows:** download the `.msi` and run the installer. Launch **Local Dev Proxy**
+  from the Start menu.
+
+The native packages include Python, Qt, and the application's Python dependencies. You
+do not need to install Python or use a terminal to launch the manager. Release builds
+do not require paid signing certificates. macOS Gatekeeper or Windows SmartScreen may
+therefore require you to explicitly approve the first launch.
+
+### Install from a release wheel
+
+The universal Python wheel remains available for Linux, development environments, and
+users who prefer Python tooling. This method requires Python 3.13+ and `uv`.
+
+Install directly from the wheel URL on the Releases page:
 
 ```shell
 uv tool install https://github.com/andrewtheguy/local-dev-proxy/releases/download/vx.y.z/local_dev_proxy-x.y.z-py3-none-any.whl
@@ -19,7 +36,7 @@ uv tool install https://github.com/andrewtheguy/local-dev-proxy/releases/downloa
 
 Then run it with `local-dev-proxy`.
 
-### Install from the GitHub Pages package index
+### Install the wheel from the GitHub Pages package index
 
 Lets you pin by version instead of pasting a wheel URL:
 
@@ -32,7 +49,7 @@ uv tool install \
 ### Install from a local checkout
 
 Installs the current working tree as a global tool so `local-dev-proxy` is on your PATH
-(works without a published release):
+(works without a published release). This requires Python 3.13+ and `uv`:
 
 ```shell
 uv tool install .
@@ -47,10 +64,10 @@ uv tool install git+https://github.com/andrewtheguy/local-dev-proxy.git@(tag or 
 
 ### Run without installing
 ```shell
-uv tool run --from git+https://github.com/andrewtheguy/local-dev-proxy.git@vx.x.x local-dev-proxy [command] [options]
+uv tool run --from git+https://github.com/andrewtheguy/local-dev-proxy.git@vx.x.x local-dev-proxy
 
 # Or from a local checkout
-uv run local-dev-proxy [command] [options]
+uv run local-dev-proxy
 ```
 
 ## What you get
@@ -76,18 +93,33 @@ uv run local-dev-proxy [command] [options]
 
 ## Configuration
 
-Configuration lives in a per-user file:
+Configuration lives in Qt's platform-standard per-user application configuration
+directory:
 
-```
-~/.config/local-dev-proxy/services.toml
-```
+| Platform | Default directory |
+|----------|-------------------|
+| macOS | `~/Library/Preferences/andrewtheguy/local-dev-proxy/` |
+| Windows | `%APPDATA%\andrewtheguy\local-dev-proxy\` |
+| Linux | `$XDG_CONFIG_HOME/andrewtheguy/local-dev-proxy/` (or `~/.config/...`) |
 
-(honors `$XDG_CONFIG_HOME`). On first run it is created automatically from the bundled
-sample. It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and
-routes. Route targets can be TCP ports or Unix domain sockets. Logs are written next to
-it under `~/.config/local-dev-proxy/logs/`.
+On first run, `services.toml` is created there automatically from the bundled sample.
+It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and routes.
+Route targets can be TCP ports or Unix domain sockets. Logs are written in the `logs/`
+directory beside it.
+
+For an isolated development or test profile, set
+`LOCAL_DEV_PROXY_CONFIG_DIR=/path/to/profile`. The selected profile controls the
+configuration, logs, cached icons, single-instance lock, and application activation
+channel. This directory is the single profile root; every application path is derived
+from it, so paths cannot be configured into inconsistent combinations and the profile
+does not touch or contend with the normal profile.
 `http_port` and `bind` are required, values are type-checked without coercion, and
 unknown keys are rejected rather than silently treated as an older config shape.
+
+Manager and service logs rotate at 10 MiB, retaining five numbered backups alongside
+the active file (`.log.1` is newest). This bounds each log to about 60 MiB. Rotation
+renames completed files rather than truncating a file while it is being written; once
+the retention limit is reached, only the oldest backup is removed.
 
 Edit it from the **Services** tab of the manager window (the config is only editable while
 the services are stopped — press **View Config**, then **Stop All & Edit Config**), or by
@@ -100,14 +132,18 @@ uv sync
 uv run local-dev-proxy
 ```
 
-`uv run local-dev-proxy` **starts the app detached** (it returns your terminal
-immediately) and opens the **manager window**. It is a single process: the manager
-window owns the in-process reverse proxy and the service processes and calls them
-directly — there is no background admin port or application-control IPC. A system-tray
-icon appears (in the macOS menu bar / Windows notification area / Linux tray); its menu
-has **Open Manager** and **Quit**. Running the command again reports that it is already
-running; use **Open Manager** from the tray to restore a hidden window. An advisory OS
-file lock prevents multiple app instances; it is not used as a command or data channel.
+`local-dev-proxy` is installed as a GUI entry point and runs the Qt application directly
+in that process. There is no CLI layer, foreground flag, self-spawn, or launcher process.
+When invoked from a terminal on macOS or Linux, the command remains attached until the
+application quits; the GUI entry point prevents a console window on Windows.
+
+The manager window owns the in-process reverse proxy and the managed service processes
+and calls them directly — there is no background admin port. A system-tray icon appears
+in the macOS menu bar, Windows notification area, or Linux tray, with **Open Manager**
+and **Quit** actions. Launching the application again sends a local Qt activation request
+to the existing instance, which restores and raises its manager window instead of
+starting another copy. The activation endpoint and instance lock are scoped to the
+selected configuration profile.
 
 ### Manager window
 
@@ -127,12 +163,12 @@ A window with three tabs:
 ### Lifecycle
 
 - **Close the window** → it hides to the system-tray icon; the proxy and services
-  keep running. Choose **Open Manager** from the tray menu to reopen it.
+  keep running. Opening the tray menu does not also restore the window; choose
+  **Open Manager** (or double-click the icon where supported) to reopen it.
 - **Quit** (the in-window *Quit* button or the tray menu's *Quit*) → stops the
   proxy, stops all managed services, and exits the app.
-
-`uv run local-dev-proxy --foreground` runs the app in the foreground (blocking) instead of
-detaching — this is what the detached launcher and a packaged build use internally.
+- **No system tray available** → closing the manager window quits cleanly so the
+  application cannot become invisible and unreachable.
 
 ## How to add a service
 
@@ -204,6 +240,7 @@ The bundled defaults live in `src/local_dev_proxy/services.toml.sample`.
 
 - **Service URL not proxying:** open the manager window's **Services** tab to check the
   service state, and confirm the port or Unix socket path is set in `services.toml`.
-- **Proxy not responding:** check `~/.config/local-dev-proxy/logs/manager.log` for
-  startup errors. Quit from the window (or the tray menu), then run `uv run local-dev-proxy` again.
+- **Proxy not responding:** check `logs/manager.log` inside the platform configuration
+  directory for startup errors. Quit from the window (or the tray menu), then run
+  `uv run local-dev-proxy` again.
 - **View service logs:** use the **Logs** tab (with *Follow* for a live tail).
