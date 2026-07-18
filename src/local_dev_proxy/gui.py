@@ -114,9 +114,15 @@ class ManagerApp:
         except Exception:
             logger.exception("Error stopping proxy during shutdown")
         finally:
-            if self.service_manager is not None:
-                self.service_manager.stop_all()
-            self.running = False
+            try:
+                if self.service_manager is not None:
+                    self.service_manager.stop_all()
+            except Exception:
+                logger.exception("Error stopping services during shutdown")
+            finally:
+                # Always clear running, even if manager teardown raised, so the
+                # app's state stays consistent and quit() can proceed.
+                self.running = False
 
     def _stop_children_safely(self) -> None:
         """atexit hook: guarantee child processes are stopped, swallowing errors."""
@@ -523,8 +529,13 @@ class ServicesTab(ttk.Frame):
         if not self._validate():
             return False
         text = self._text.get("1.0", "end-1c")
+        dest = self._app.paths.services_file
         try:
-            self._app.paths.services_file.write_text(text)
+            # Write to a temp sibling then atomically replace, so a failed write
+            # never leaves services.toml half-written / corrupted.
+            tmp = dest.with_name(f"{dest.name}.tmp")
+            tmp.write_text(text)
+            os.replace(tmp, dest)
         except OSError as exc:
             self._status.config(text=f"write error: {exc}", foreground="#b00")
             return False
@@ -656,6 +667,10 @@ class RoutesTab(ttk.Frame):
             "", "end", text=f"{service.name}{note}",  # type: ignore[attr-defined]
             values=("", ""), open=True, tags=tags,
         )
+        if service.disabled:  # type: ignore[attr-defined]
+            # Disabled services' routes are excluded from the proxy, so don't show
+            # (openable) route rows for them — just the disabled parent above.
+            return
         for route in service.routes:  # type: ignore[attr-defined]
             target = self._target(service, route)
             for host in route.hosts:

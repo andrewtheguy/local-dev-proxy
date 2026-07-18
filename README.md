@@ -29,7 +29,8 @@ sample. It holds proxy settings (`http_port`, `bind`), service commands, env/por
 routes. Logs are written next to it under `~/.config/local-dev-proxy/logs/`.
 
 Edit it from the **Services** tab of the manager window (the config is only editable while
-the services are stopped — press the tab's *Stop to Edit* button), or by hand.
+the services are stopped — press **View Config**, then **Stop All & Edit Config**), or by
+hand.
 
 ## Usage
 
@@ -50,8 +51,9 @@ A Tkinter window with three tabs:
 
 - **Services** — status, PID, restart count and exit code for every service, with
   per-service Start / Stop / Restart buttons. This tab doubles as the config editor:
-  press **Stop to Edit** to stop the proxy and services and swap to the `services.toml`
-  editor (Validate / Save / Reload), then **Start All** to validate, save, and relaunch
+  press **View Config** to see `services.toml` (read-only, services still running), then
+  **Stop All & Edit Config** to stop the proxy and services and swap to the editor
+  (Validate / Save / Reload), then **Start All** to validate, save, and relaunch
   live (no app restart needed) — swapping back to the service list.
 - **Logs** — view or follow (tail) any service's log.
 - **Routes** — every service URL; double-click to open it in your browser.

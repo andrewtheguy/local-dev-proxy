@@ -82,7 +82,12 @@ class ServiceManager:
         with self._lock:
             for name, info in self._services.items():
                 if info.managed:
-                    self._stop_service_locked(name)
+                    # Isolate each stop so one child's teardown failure doesn't
+                    # leave the remaining managed processes running.
+                    try:
+                        self._stop_service_locked(name)
+                    except Exception:
+                        logger.exception("Error stopping service %s", name)
             self._remove_pidfile()
 
     def start_service(self, name: str) -> None:
