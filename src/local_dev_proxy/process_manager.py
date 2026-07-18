@@ -8,7 +8,14 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import BinaryIO
 
+from .log_rotation import (
+    LOG_BACKUP_COUNT,
+    LOG_MAX_BYTES,
+    RotatingLogWriter,
+    pump_log_stream,
+)
 from .routes import RoutesManifest, resolve_command
 
 logger = logging.getLogger(__name__)
@@ -25,14 +32,25 @@ class ServiceInfo:
     exit_code: int | None = None
     restart_count: int = 0
     process: subprocess.Popen[bytes] | None = field(default=None, repr=False)
+    log_thread: threading.Thread | None = field(default=None, repr=False)
 
 
 class ServiceManager:
-    def __init__(self, manifest: RoutesManifest, log_dir: Path, cwd: Path) -> None:
+    def __init__(
+        self,
+        manifest: RoutesManifest,
+        log_dir: Path,
+        cwd: Path,
+        *,
+        log_max_bytes: int = LOG_MAX_BYTES,
+        log_backup_count: int = LOG_BACKUP_COUNT,
+    ) -> None:
         self._lock = threading.Lock()
         self._services: dict[str, ServiceInfo] = {}
         self._log_dir = log_dir
         self._cwd = cwd
+        self._log_max_bytes = log_max_bytes
+        self._log_backup_count = log_backup_count
         self._monitor_stop = threading.Event()
         self._monitor_thread: threading.Thread | None = None
 
@@ -140,42 +158,83 @@ class ServiceManager:
             return
 
         log_path = self.get_log_path(name)
-        log_file = open(log_path, "a")
+        log_writer = RotatingLogWriter(
+            log_path,
+            max_bytes=self._log_max_bytes,
+            backup_count=self._log_backup_count,
+        )
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        log_file.write(f"\n{'=' * 60}\n")
-        log_file.write(f"--- {name} started at {timestamp} ---\n")
-        log_file.write(f"{'=' * 60}\n")
-        log_file.flush()
+        log_writer.write(
+            (
+                f"\n{'=' * 60}\n"
+                f"--- {name} started at {timestamp} ---\n"
+                f"{'=' * 60}\n"
+            ).encode()
+        )
 
         try:
             process = subprocess.Popen(
                 info.command,
-                stdout=log_file,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 env=info.env,
                 cwd=self._cwd,
                 start_new_session=True,
             )
         except FileNotFoundError:
-            log_file.write(f"ERROR: Command not found: {info.command[0]}\n")
-            log_file.close()
+            log_writer.write(f"ERROR: Command not found: {info.command[0]}\n".encode())
+            log_writer.close()
             info.status = "crashed"
             info.pid = None
             logger.error(
                 "Failed to start %s: command not found: %s", name, info.command[0]
             )
             return
+        except BaseException:
+            log_writer.close()
+            raise
 
+        assert process.stdout is not None
+        log_thread = threading.Thread(
+            target=self._pump_service_log,
+            args=(process.stdout, log_writer),
+            name=f"{name}-log-writer",
+            daemon=True,
+        )
         info.process = process
+        info.log_thread = log_thread
         info.pid = process.pid
         info.status = "running"
         info.exit_code = None
+        log_thread.start()
         logger.info("Started %s (PID %d)", name, process.pid)
+
+    @staticmethod
+    def _pump_service_log(
+        source: BinaryIO, writer: RotatingLogWriter
+    ) -> None:
+        pump_log_stream(source, writer)
+
+    @staticmethod
+    def _finish_log_capture(info: ServiceInfo) -> None:
+        thread = info.log_thread
+        if thread is None:
+            return
+        thread.join(timeout=5)
+        if thread.is_alive() and info.process is not None:
+            stream = info.process.stdout
+            if stream is not None:
+                stream.close()
+            thread.join(timeout=1)
+        if thread.is_alive():
+            logger.warning("Log writer for service %s did not stop", info.name)
+        info.log_thread = None
 
     def _stop_service_locked(self, name: str) -> None:
         info = self._services[name]
         process = info.process
         if process is None or process.poll() is not None:
+            self._finish_log_capture(info)
             info.status = "stopped"
             info.pid = None
             info.process = None
@@ -195,6 +254,7 @@ class ServiceManager:
                 pass
             process.wait(timeout=3)
 
+        self._finish_log_capture(info)
         info.exit_code = process.returncode
         info.status = "stopped"
         info.pid = None
@@ -219,6 +279,7 @@ class ServiceManager:
                         continue
                     returncode = info.process.poll()
                     if returncode is not None:
+                        self._finish_log_capture(info)
                         info.exit_code = returncode
                         info.status = "crashed"
                         info.pid = None

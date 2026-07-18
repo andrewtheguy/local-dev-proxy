@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import atexit
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import re
 import signal
@@ -80,6 +81,7 @@ from .config import (
     icon_path,
     release_instance_lock,
 )
+from .log_rotation import LOG_BACKUP_COUNT, LOG_MAX_BYTES
 from .routes import (
     RouteConfigError,
     ServiceDef,
@@ -100,6 +102,25 @@ _STATUS_COLORS = {
     _SUCCESS: "#08752f",
     _ERROR: "#b42318",
 }
+
+
+def _configure_manager_logging(log_path: Path) -> RotatingFileHandler:
+    handler = RotatingFileHandler(
+        log_path,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+        delay=True,
+    )
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s %(levelname)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        )
+    )
+    package_logger = logging.getLogger("local_dev_proxy")
+    package_logger.addHandler(handler)
+    package_logger.setLevel(logging.INFO)
+    return handler
 
 
 class ServiceManagerLike(Protocol):
@@ -127,7 +148,7 @@ def _acquire_lock() -> FileLock:
     try:
         return acquire_instance_lock()
     except AlreadyRunningError as exc:
-        print(str(exc), file=sys.stderr)
+        logger.error("%s", exc)
         raise SystemExit(1) from exc
 
 
@@ -1292,8 +1313,7 @@ class ManagerController:
             self._url_opener(url)
 
 
-def run_gui() -> None:
-    paths = ensure_config()
+def _run_gui(paths: ProjectPaths) -> None:
     lock = _acquire_lock()
     app = QApplication.instance()
     owns_application = app is None
@@ -1308,7 +1328,7 @@ def run_gui() -> None:
     try:
         controller.start_services()
     except Exception as exc:  # noqa: BLE001 - bad config opens in editor mode
-        print(f"Startup failed; services left stopped: {exc}", file=sys.stderr)
+        logger.error("Startup failed; services left stopped: %s", exc)
 
     controller.prime()
     controller.window.show()
@@ -1322,3 +1342,14 @@ def run_gui() -> None:
             app.exec()
     finally:
         controller.quit()
+
+
+def run_gui() -> None:
+    paths = ensure_config()
+    handler = _configure_manager_logging(paths.logs_dir / "manager.log")
+    try:
+        _run_gui(paths)
+    finally:
+        package_logger = logging.getLogger("local_dev_proxy")
+        package_logger.removeHandler(handler)
+        handler.close()

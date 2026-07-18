@@ -18,23 +18,19 @@ def _spawn_detached() -> int:
     """Launch the app (proxy + services + window + system-tray icon) detached.
 
     Re-execs ``python -m local_dev_proxy --foreground`` in a new session with
-    output redirected to the log dir and returns the spawned process PID. There
-    is no startup handshake or command channel back to the launcher.
+    output handled by the manager's rotating logger and returns the spawned
+    process PID. There is no startup handshake or command channel back to the
+    launcher.
     """
     paths = ensure_config()
-    log_file = paths.logs_dir / "manager.log"
-    out = open(log_file, "ab")
-    try:
-        process = subprocess.Popen(
-            [sys.executable, "-m", "local_dev_proxy", "--foreground"],
-            stdin=subprocess.DEVNULL,
-            stdout=out,
-            stderr=out,
-            start_new_session=True,
-            cwd=str(paths.config_dir),
-        )
-    finally:
-        out.close()
+    process = subprocess.Popen(
+        [sys.executable, "-m", "local_dev_proxy", "--foreground"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        cwd=str(paths.config_dir),
+    )
     return process.pid
 
 

@@ -89,6 +89,11 @@ it under `~/.config/local-dev-proxy/logs/`.
 `http_port` and `bind` are required, values are type-checked without coercion, and
 unknown keys are rejected rather than silently treated as an older config shape.
 
+Manager and service logs rotate at 10 MiB, retaining five numbered backups alongside
+the active file (`.log.1` is newest). This bounds each log to about 60 MiB. Rotation
+renames completed files rather than truncating a file while it is being written; once
+the retention limit is reached, only the oldest backup is removed.
+
 Edit it from the **Services** tab of the manager window (the config is only editable while
 the services are stopped — press **View Config**, then **Stop All & Edit Config**), or by
 hand.
