@@ -135,6 +135,12 @@ jobs:
       - name: Package Windows app as MSI
         run: uv run --no-default-groups --group packaging cxfreeze bdist_msi
 
+      # cx_Freeze names the MSI with the version (local-dev-proxy-0.0.8-win64.msi);
+      # rename to a stable, version-less asset name like the macOS DMG.
+      - name: Rename MSI to release asset name
+        shell: bash
+        run: mv dist/*.msi dist/local-dev-proxy-win64.msi
+
       - name: Upload Windows MSI artifact
         uses: actions/upload-artifact@v4
         with:
