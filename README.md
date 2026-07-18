@@ -29,7 +29,7 @@ sample. It holds proxy settings (`http_port`, `bind`), service commands, env/por
 routes. Logs are written next to it under `~/.config/local-dev-proxy/logs/`.
 
 Edit it from the **Config** tab of the manager window (the config is only editable while
-the manager is stopped — the tab has a *Stop Manager* button), or by hand.
+the manager is stopped — the tab has a *Stop to Edit* button), or by hand.
 
 ## Usage
 

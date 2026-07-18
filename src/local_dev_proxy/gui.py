@@ -34,9 +34,26 @@ def _acquire_lock() -> int:
 
 
 def _tail_file(path: Path, lines: int) -> str:
-    if not path.exists():
+    if not path.exists() or lines <= 0:
         return ""
-    data = path.read_text(errors="replace").splitlines()
+    # Read backwards in chunks so we only load roughly the requested tail into
+    # memory rather than the whole (potentially huge) log file.
+    chunk = 8192
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            pos = fh.tell()
+            buf = b""
+            # +1 so we can drop a partial first line once we have enough.
+            while pos > 0 and buf.count(b"\n") <= lines:
+                read = min(chunk, pos)
+                pos -= read
+                fh.seek(pos)
+                buf = fh.read(read) + buf
+    except OSError:
+        return ""
+    text = buf.decode(errors="replace")
+    data = text.splitlines()
     tail = data[-lines:] if len(data) > lines else data
     return "\n".join(tail) + ("\n" if tail else "")
 
@@ -259,15 +276,19 @@ class LogsTab(ttk.Frame):
         sm = self._app.service_manager
         names = sm.service_names() if sm is not None else []
         self._service["values"] = names
-        if names and not self._service.get():
-            self._service.current(0)
+        current = self._service.get()
+        if current not in names:
+            # Selection was removed (or none yet): pick the first, else clear.
+            if names:
+                self._service.current(0)
+            else:
+                self._service.set("")
 
     def _tick(self) -> None:
         sm = self._app.service_manager
+        # Refresh the list each tick so added/removed services show up live.
+        self._populate_services()
         name = self._service.get()
-        if not name:
-            self._populate_services()
-            name = self._service.get()
         if name and sm is not None:
             try:
                 lines = int(self._lines.get())
@@ -375,7 +396,7 @@ class ConfigTab(ttk.Frame):
         self._text.delete("1.0", "end")
         self._text.insert("1.0", content)
 
-    def refresh(self) -> None:
+    def refresh(self, reschedule: bool = True) -> None:
         running = self._app.running
         if running:
             self._banner.config(text="Services are running — stop them to edit the configuration.")
@@ -391,13 +412,14 @@ class ConfigTab(ttk.Frame):
             self._start_btn.state(["!disabled"])
             for btn in (self._validate_btn, self._save_btn):
                 btn.state(["!disabled"])
-        self.after(_POLL_MS, self.refresh)
+        if reschedule:
+            self.after(_POLL_MS, self.refresh)
 
     def _stop(self) -> None:
         self._status.config(text="stopping…")
         self._app.stop_services()
         self._status.config(text="stopped")
-        self.refresh()
+        self.refresh(reschedule=False)
 
     def _start(self) -> None:
         # Persist the editor buffer first so Start always applies what's on screen.
@@ -410,7 +432,7 @@ class ConfigTab(ttk.Frame):
             self._status.config(text=f"start failed: {exc}", foreground="#b00")
             return
         self._status.config(text="saved & started ✓", foreground="#070")
-        self.refresh()
+        self.refresh(reschedule=False)
 
     def _validate(self) -> bool:
         text = self._text.get("1.0", "end-1c")
@@ -452,10 +474,16 @@ def run_gui() -> None:
     root.geometry("760x560")
 
     app = ManagerApp(root, paths, lock_fd)
-    app.start_services()
+    # Build the window first so a bad config doesn't prevent the UI from coming
+    # up; start_services() rolls back on failure, leaving services stopped so
+    # the user can repair the config from the Config tab and press Start.
     app.build_ui()
     app.install_icon()
     app.wire_lifecycle()
     app.install_signals()
+    try:
+        app.start_services()
+    except Exception as exc:  # noqa: BLE001 — surface, don't crash the window
+        print(f"Startup failed; services left stopped: {exc}", file=sys.stderr)
 
     root.mainloop()

@@ -70,9 +70,10 @@ def main(
         try:
             os.kill(pid, signal.SIGUSR1)  # ask the running app to raise its window
         except ProcessLookupError:
-            pass
-        typer.echo(f"local-dev-proxy is already running (PID {pid}).")
-        return
+            pass  # stale PID (process gone); fall through to a fresh spawn
+        else:
+            typer.echo(f"local-dev-proxy is already running (PID {pid}).")
+            return
 
     pid = _spawn_detached()
     if pid is None:
