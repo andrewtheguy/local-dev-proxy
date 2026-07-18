@@ -489,6 +489,9 @@ class ManagerWindow(QMainWindow):
                 background: #ffffff; border: 1px solid #98a2b3;
                 selection-background-color: #cfe1f7; selection-color: #101828;
             }
+            QPlainTextEdit[readOnly="true"] {
+                background: #f2f4f7; color: #475467; border-color: #d0d5dd;
+            }
             QHeaderView::section {
                 background: #eaecf0; color: #344054; padding: 6px;
                 border: 0; border-right: 1px solid #d0d5dd;

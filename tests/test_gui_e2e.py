@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QColor, QImage, QPalette
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -301,6 +301,12 @@ def test_all_manager_flows_with_screenshots(
     qtbot.mouseClick(window.view_config_button, Qt.MouseButton.LeftButton)
     assert window.services_stack.currentWidget() is window.readonly_view
     assert window.readonly_config.toPlainText() == original_config.decode()
+    assert window.readonly_config.palette().color(QPalette.ColorRole.Base) == QColor(
+        "#f2f4f7"
+    )
+    assert window.config_editor.palette().color(QPalette.ColorRole.Base) == QColor(
+        "#ffffff"
+    )
     assert window.edit_config_button.text() == "Stop All && Edit Config"
     assert window.edit_config_button.parentWidget() is window.services_tab
     back_position = window.view_config_button.mapTo(
