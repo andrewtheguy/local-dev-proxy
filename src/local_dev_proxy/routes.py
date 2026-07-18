@@ -26,6 +26,7 @@ class ServiceDef:
     command: list[str] | None = None
     env: dict[str, str] = field(default_factory=dict)
     routes: list[ServiceRoute] = field(default_factory=list)
+    disabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,10 @@ def build_manifest(data: dict[str, object]) -> RoutesManifest:
         env = raw.get("env", {})
         if not isinstance(env, dict):
             raise RouteConfigError(f"services.{name}.env must be a table")
+
+        disabled = raw.get("disabled", False)
+        if not isinstance(disabled, bool):
+            raise RouteConfigError(f"services.{name}.disabled must be a boolean")
 
         raw_routes = raw.get("routes", [])
         if not isinstance(raw_routes, list):
@@ -151,6 +156,7 @@ def build_manifest(data: dict[str, object]) -> RoutesManifest:
             command=[str(c) for c in command] if command is not None else None,
             env={str(k): str(v) for k, v in env.items()},
             routes=routes,
+            disabled=disabled,
         )
 
     return RoutesManifest(

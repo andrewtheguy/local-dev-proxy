@@ -72,6 +72,28 @@ def install_status_item(icon_path: Path | None, on_click: Callable[[], None]) ->
     return (item, target)
 
 
+def set_dock_icon(icon_path: Path | None) -> None:
+    """Set the macOS Dock icon for the running app.
+
+    No-op when off macOS (pyobjc missing) or the icon can't be loaded. Tk's Aqua
+    port owns the shared ``NSApplication``, so this just points its icon image at
+    our PNG; must run on the main thread (call it during UI setup).
+    """
+    if icon_path is None:
+        return
+    try:
+        import AppKit  # noqa: PLC0415 — optional, macOS-only
+    except ImportError as exc:
+        logger.warning("Dock icon unavailable (%s); running without it.", exc)
+        return
+
+    image = AppKit.NSImage.alloc().initWithContentsOfFile_(str(icon_path))
+    if image is None:
+        logger.warning("Dock icon could not be loaded from %s", icon_path)
+        return
+    AppKit.NSApplication.sharedApplication().setApplicationIconImage_(image)
+
+
 def remove_status_item(handle: object | None) -> None:
     """Remove a status item created by :func:`install_status_item`."""
     if handle is None:

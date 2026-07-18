@@ -28,8 +28,9 @@ Configuration lives in a per-user file:
 sample. It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and
 routes. Logs are written next to it under `~/.config/local-dev-proxy/logs/`.
 
-Edit it from the **Config** tab of the manager window (the config is only editable while
-the manager is stopped — the tab has a *Stop to Edit* button), or by hand.
+Edit it from the **Services** tab of the manager window (the config is only editable while
+the services are stopped — press **View Config**, then **Stop All & Edit Config**), or by
+hand.
 
 ## Usage
 
@@ -46,15 +47,16 @@ it to bring the window back. Running the command again just raises the existing 
 
 ### Manager window
 
-A Tkinter window with four tabs:
+A Tkinter window with three tabs:
 
 - **Services** — status, PID, restart count and exit code for every service, with
-  Start / Stop / Restart buttons.
+  per-service Start / Stop / Restart buttons. This tab doubles as the config editor:
+  press **View Config** to see `services.toml` (read-only, services still running), then
+  **Stop All & Edit Config** to stop the proxy and services and swap to the editor
+  (Validate / Save / Reload), then **Start All** to validate, save, and relaunch
+  live (no app restart needed) — swapping back to the service list.
 - **Logs** — view or follow (tail) any service's log.
 - **Routes** — every service URL; double-click to open it in your browser.
-- **Config** — edit `services.toml`, Validate, and Save. The proxy and services must be
-  stopped to edit: use **Stop to Edit**, make your change, Save, then **Start** to apply
-  it live (no app restart needed).
 
 ### Lifecycle
 
@@ -104,6 +106,11 @@ id = "vite"
 hosts = ["vite.localhost"]
 target_port = 5173
 ```
+
+To turn a service off without deleting its config, add `disabled = true` to its
+`[services.x]` table. A disabled service is not started or managed, and its routes are
+excluded from the proxy and the portal — it still appears in the **Services** list with a
+`disabled` status. Remove the line (or set it to `false`) to re-enable it.
 
 The bundled defaults live in `src/local_dev_proxy/services.toml.sample`.
 

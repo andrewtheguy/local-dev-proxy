@@ -44,6 +44,9 @@ def resolve_routes(
     seen_ports: dict[int, str] = {}
 
     for service in manifest.services.values():
+        if service.disabled:
+            continue
+
         effective_env: dict[str, str] = dict(service.env)
         if env:
             effective_env.update(env)

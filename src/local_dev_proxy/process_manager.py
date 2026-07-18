@@ -23,7 +23,7 @@ class ServiceInfo:
     command: list[str] | None
     env: dict[str, str]
     managed: bool = True
-    status: str = "stopped"  # running | stopped | crashed | unmanaged
+    status: str = "stopped"  # running | stopped | crashed | unmanaged | disabled
     pid: int | None = None
     exit_code: int | None = None
     restart_count: int = 0
@@ -42,7 +42,15 @@ class ServiceManager:
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
         for name, service_def in manifest.services.items():
-            if service_def.command is None:
+            if service_def.disabled:
+                self._services[name] = ServiceInfo(
+                    name=name,
+                    command=None,
+                    env={},
+                    managed=False,
+                    status="disabled",
+                )
+            elif service_def.command is None:
                 self._services[name] = ServiceInfo(
                     name=name,
                     command=None,
@@ -74,7 +82,12 @@ class ServiceManager:
         with self._lock:
             for name, info in self._services.items():
                 if info.managed:
-                    self._stop_service_locked(name)
+                    # Isolate each stop so one child's teardown failure doesn't
+                    # leave the remaining managed processes running.
+                    try:
+                        self._stop_service_locked(name)
+                    except Exception:
+                        logger.exception("Error stopping service %s", name)
             self._remove_pidfile()
 
     def start_service(self, name: str) -> None:

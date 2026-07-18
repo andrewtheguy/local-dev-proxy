@@ -30,6 +30,7 @@ target_port_env = "S3BROWSER_PORT"
 [services.minisearch]
 command = ["minisearch", "serve", "--profile", "nas-server", "--bind", "127.0.0.1:{MINISEARCH_PORT}"]
 env = {MINISEARCH_PORT = "52378"}
+# disabled = true   # turn this service off (skip its process + routes) without deleting its config
 
 [[services.minisearch.routes]]
 id = "minisearch"

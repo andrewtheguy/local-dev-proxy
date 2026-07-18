@@ -13,6 +13,7 @@ from typing import Mapping
 _APP_NAME = "local-dev-proxy"
 _SAMPLE_RESOURCE = "services.toml.sample"
 _ICON_RESOURCE = "assets/tray-icon.png"
+_DOCK_ICON_RESOURCE = "assets/dock-icon.png"
 
 # Single-instance lock for the running manager (proxy + service manager).
 LOCK_PATH = os.path.join(os.environ.get("TMPDIR", "/tmp"), "local-dev-proxy.lock")
@@ -108,17 +109,17 @@ def ensure_config(paths: ProjectPaths | None = None) -> ProjectPaths:
     return resolved
 
 
-def icon_path() -> Path | None:
-    """Return a filesystem path to the bundled tray icon, or None if missing.
+def _cached_icon(resource_name: str, cache_name: str) -> Path | None:
+    """Copy a bundled icon into the config dir and return its path, or None.
 
-    Uses the config dir as a stable cache so the icon works even when the
-    package is loaded from a zip/frozen bundle.
+    Using the config dir as a stable cache means the icon works even when the
+    package is loaded from a zip/frozen bundle (where resources have no real path).
     """
-    resource = bundled_resource(_ICON_RESOURCE)
+    resource = bundled_resource(resource_name)
     if not resource.is_file():
         return None
 
-    cache = user_config_dir() / "tray-icon.png"
+    cache = user_config_dir() / cache_name
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
         with resources.as_file(resource) as src:
@@ -126,6 +127,16 @@ def icon_path() -> Path | None:
     except OSError:
         return None
     return cache
+
+
+def icon_path() -> Path | None:
+    """Return a filesystem path to the bundled menu-bar (tray) icon, or None."""
+    return _cached_icon(_ICON_RESOURCE, "tray-icon.png")
+
+
+def dock_icon_path() -> Path | None:
+    """Return a filesystem path to the bundled Dock icon, or None."""
+    return _cached_icon(_DOCK_ICON_RESOURCE, "dock-icon.png")
 
 
 def require_port(env: Mapping[str, str], key: str) -> int:
