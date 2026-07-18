@@ -1,5 +1,8 @@
 Local dev proxy: built-in reverse proxy + process manager with a macOS menu bar app and a Tkinter manager UI.
 
+> **No backward compatibility while on `v0.0.x`.** Any release may make breaking changes to
+> the config format, CLI, or behavior without a deprecation path. Pin to an exact version.
+
 ## Installation
 
 macOS only (the menu-bar item and manager UI rely on macOS/pyobjc).

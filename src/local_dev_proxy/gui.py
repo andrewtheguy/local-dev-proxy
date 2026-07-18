@@ -12,6 +12,7 @@ import webbrowser
 from pathlib import Path
 from tkinter import ttk
 
+from . import __version__
 from .config import LOCK_PATH, ProjectPaths, dock_icon_path, ensure_config, icon_path
 from .process_manager import ServiceManager
 from .proxy import ProxyServer
@@ -137,6 +138,7 @@ class ManagerApp:
         toolbar = ttk.Frame(self.root, padding=(8, 6, 8, 0))
         toolbar.pack(fill="x")
         ttk.Button(toolbar, text="Quit", command=self.quit).pack(side="right")
+        ttk.Label(toolbar, text=f"v{__version__}", foreground="#888").pack(side="left")
 
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True, padx=8, pady=8)
@@ -705,7 +707,7 @@ def run_gui() -> None:
     lock_fd = _acquire_lock()
 
     root = tk.Tk()
-    root.title("Local Dev Proxy — Manager")
+    root.title(f"Local Dev Proxy — Manager v{__version__}")
     root.geometry("760x560")
 
     app = ManagerApp(root, paths, lock_fd)
