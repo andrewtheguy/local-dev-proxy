@@ -63,9 +63,15 @@ class ManagerApp:
         """(Re)build the manager + proxy from the current config and start them."""
         if self.running:
             return
-        self.service_manager = start_services_managed(self.paths)
-        self.service_manager.start_all()
-        self.proxy = start_proxy(self.paths)
+        try:
+            self.service_manager = start_services_managed(self.paths)
+            self.service_manager.start_all()
+            self.proxy = start_proxy(self.paths)
+        except Exception:
+            # A partial start leaves children alive; tear them down so a retry
+            # doesn't launch duplicates.
+            self.stop_services()
+            raise
         self.running = True
 
     def stop_services(self) -> None:
