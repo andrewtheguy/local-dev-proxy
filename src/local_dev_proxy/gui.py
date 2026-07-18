@@ -91,6 +91,7 @@ from .routes import (
     validate_toml,
 )
 from .services import start_proxy, start_services_managed
+from .shell_env import restore_login_shell_path
 from .single_instance import ActivationServer, activate_running_instance
 
 logger = logging.getLogger(__name__)
@@ -1362,6 +1363,9 @@ def _run_gui(
 
 def run_gui(paths: ProjectPaths | None = None) -> int:
     """Run the Qt desktop application directly in the current process."""
+    # Recover the login-shell PATH before any managed service captures the
+    # environment; a Finder/Dock launch otherwise only sees a minimal PATH.
+    restore_login_shell_path()
     configure_application_identity()
     app = QApplication.instance()
     owns_application = app is None
