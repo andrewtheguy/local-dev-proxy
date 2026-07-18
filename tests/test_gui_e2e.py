@@ -304,9 +304,14 @@ def test_all_manager_flows_with_screenshots(
     assert window.readonly_config.palette().color(QPalette.ColorRole.Base) == QColor(
         "#f2f4f7"
     )
+    assert (
+        window.readonly_config.font().pointSizeF()
+        == QApplication.font().pointSizeF()
+    )
     assert window.config_editor.palette().color(QPalette.ColorRole.Base) == QColor(
         "#ffffff"
     )
+    assert window.config_editor.font().pointSizeF() == QApplication.font().pointSizeF()
     assert window.edit_config_button.text() == "Stop All && Edit Config"
     assert window.edit_config_button.parentWidget() is window.services_tab
     back_position = window.view_config_button.mapTo(

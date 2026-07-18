@@ -158,10 +158,12 @@ def _icon(path: Path | None) -> QIcon:
     return icon
 
 
-def _monospace_font(point_size: int = 11) -> QFont:
-    font = QFont("Menlo")
+def _monospace_font(point_size: int | None = None) -> QFont:
+    font = QFont(QApplication.font())
+    font.setFamily("Menlo")
     font.setStyleHint(QFont.StyleHint.Monospace)
-    font.setPointSize(point_size)
+    if point_size is not None:
+        font.setPointSize(point_size)
     return font
 
 
