@@ -554,15 +554,23 @@ class RoutesTab(ttk.Frame):
         super().__init__(master, padding=8)
         self._paths = paths
 
-        ttk.Label(self, text="Double-click a route to open it in your browser.").pack(anchor="w")
+        ttk.Label(
+            self,
+            text="Routes grouped by service — each service's URLs and the port they proxy to. "
+            "Double-click a URL to open it.",
+        ).pack(anchor="w")
         self._banner = ttk.Label(self, text="", foreground="#b00")
         self._banner.pack(fill="x")
 
-        self._tree = ttk.Treeview(self, columns=("url",), show="tree headings", height=12)
-        self._tree.heading("#0", text="route")
+        self._tree = ttk.Treeview(self, columns=("url", "target"), show="tree headings", height=12)
+        self._tree.heading("#0", text="service / route")
         self._tree.heading("url", text="url")
-        self._tree.column("#0", width=160, anchor="w")
-        self._tree.column("url", width=360, anchor="w")
+        self._tree.heading("target", text="→ proxies to")
+        self._tree.column("#0", width=220, anchor="w")
+        self._tree.column("url", width=300, anchor="w")
+        self._tree.column("target", width=150, anchor="w")
+        self._tree.tag_configure("service", font=("TkDefaultFont", 11, "bold"))
+        self._tree.tag_configure("muted", foreground="#999")
         self._tree.pack(fill="both", expand=True, pady=(6, 0))
         self._tree.bind("<Double-1>", self._open)
 
@@ -578,17 +586,47 @@ class RoutesTab(ttk.Frame):
             return
         self._banner.config(text="")
         for service in manifest.services.values():
-            for route in service.routes:
-                for host in route.hosts:
-                    if "*" in host:
-                        continue
-                    url = f"http://{host}:{manifest.http_port}/"
-                    self._tree.insert("", "end", text=route.id, values=(url,))
+            self._add_service(service, manifest.http_port)
+
+    def _add_service(self, service: object, http_port: int) -> None:
+        # A service (parent) with its routes nested beneath, so the
+        # service ↔ route relationship is visible at a glance.
+        if service.disabled:  # type: ignore[attr-defined]
+            note, tags = "  (disabled — routes inactive)", ("service", "muted")
+        elif service.command is None:  # type: ignore[attr-defined]
+            note, tags = "  (external — not started here)", ("service",)
+        else:
+            note, tags = "", ("service",)
+        parent = self._tree.insert(
+            "", "end", text=f"{service.name}{note}",  # type: ignore[attr-defined]
+            values=("", ""), open=True, tags=tags,
+        )
+        for route in service.routes:  # type: ignore[attr-defined]
+            target = self._target(service, route)
+            for host in route.hosts:
+                if "*" in host:
+                    self._tree.insert(parent, "end", text=route.id,
+                                      values=(f"{host}  (wildcard)", target), tags=("muted",))
+                else:
+                    url = f"http://{host}:{http_port}/"
+                    self._tree.insert(parent, "end", text=route.id, values=(url, target))
+
+    @staticmethod
+    def _target(service: object, route: object) -> str:
+        host = route.target_host  # type: ignore[attr-defined]
+        if route.target_port is not None:  # type: ignore[attr-defined]
+            return f"{host}:{route.target_port}"  # type: ignore[attr-defined]
+        env_name = route.target_port_env  # type: ignore[attr-defined]
+        port = service.env.get(env_name)  # type: ignore[attr-defined]
+        return f"{host}:{port}" if port else f"{host}:${{{env_name}}}"
 
     def _open(self, _event: tk.Event) -> None:
         sel = self._tree.selection()
-        if sel:
-            url = self._tree.item(sel[0], "values")[0]
+        if not sel:
+            return
+        values = self._tree.item(sel[0], "values")
+        url = values[0] if values else ""
+        if url.startswith("http://"):  # skip service parents and wildcard rows
             webbrowser.open(url)
 
 
