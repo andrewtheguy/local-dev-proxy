@@ -223,7 +223,7 @@ wheels = [
 
 [[package]]
 name = "local-dev-proxy"
-version = "0.0.6"
+version = "0.0.5"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
