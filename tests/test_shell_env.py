@@ -8,19 +8,23 @@ import pytest
 from local_dev_proxy import shell_env
 
 
+def _join(*entries: str) -> str:
+    return os.pathsep.join(entries)
+
+
 def test_merge_path_prefers_resolved_and_dedupes() -> None:
-    resolved = "/opt/homebrew/bin:/usr/bin"
-    current = "/usr/bin:/bin"
+    resolved = _join("/opt/homebrew/bin", "/usr/bin")
+    current = _join("/usr/bin", "/bin")
 
     merged = shell_env.merge_path(current, resolved)
 
-    assert merged == os.pathsep.join(["/opt/homebrew/bin", "/usr/bin", "/bin"])
+    assert merged == _join("/opt/homebrew/bin", "/usr/bin", "/bin")
 
 
 def test_merge_path_drops_empty_entries() -> None:
-    merged = shell_env.merge_path("/bin::", ":/opt/bin:")
+    merged = shell_env.merge_path(_join("/bin", "", ""), _join("", "/opt/bin", ""))
 
-    assert merged == os.pathsep.join(["/opt/bin", "/bin"])
+    assert merged == _join("/opt/bin", "/bin")
 
 
 def test_query_login_shell_path_extracts_between_markers(
@@ -65,27 +69,26 @@ def test_restore_login_shell_path_updates_environ(
 ) -> None:
     monkeypatch.setattr(shell_env.sys, "platform", "darwin")
     monkeypatch.setattr(
-        shell_env, "query_login_shell_path", lambda: "/opt/homebrew/bin:/usr/bin"
+        shell_env, "query_login_shell_path", lambda: _join("/opt/homebrew/bin", "/usr/bin")
     )
-    environ: dict[str, str] = {"PATH": "/usr/bin:/bin"}
+    environ: dict[str, str] = {"PATH": _join("/usr/bin", "/bin")}
 
     changed = shell_env.restore_login_shell_path(environ)
 
     assert changed is True
-    assert environ["PATH"] == os.pathsep.join(
-        ["/opt/homebrew/bin", "/usr/bin", "/bin"]
-    )
+    assert environ["PATH"] == _join("/opt/homebrew/bin", "/usr/bin", "/bin")
 
 
 def test_restore_login_shell_path_noop_when_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    unchanged = _join("/usr/bin", "/bin")
     monkeypatch.setattr(shell_env.sys, "platform", "darwin")
-    monkeypatch.setattr(shell_env, "query_login_shell_path", lambda: "/usr/bin:/bin")
-    environ: dict[str, str] = {"PATH": "/usr/bin:/bin"}
+    monkeypatch.setattr(shell_env, "query_login_shell_path", lambda: unchanged)
+    environ: dict[str, str] = {"PATH": unchanged}
 
     assert shell_env.restore_login_shell_path(environ) is False
-    assert environ["PATH"] == "/usr/bin:/bin"
+    assert environ["PATH"] == unchanged
 
 
 def test_restore_login_shell_path_skipped_on_windows(
