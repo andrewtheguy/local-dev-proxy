@@ -223,17 +223,18 @@ wheels = [
 
 [[package]]
 name = "local-dev-proxy"
-version = "0.0.5"
+version = "0.0.6"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "filelock" },
-    { name = "pyside6" },
+    { name = "pyside6-essentials" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
+    { name = "pyside6" },
     { name = "pytest" },
     { name = "pytest-aiohttp" },
     { name = "pytest-qt" },
@@ -244,12 +245,13 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "filelock", specifier = ">=3.31.0" },
-    { name = "pyside6", specifier = ">=6.9.0,<7" },
+    { name = "pyside6-essentials", specifier = ">=6.9.0,<7" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "basedpyright", specifier = ">=1.29.0" },
+    { name = "pyside6", specifier = ">=6.9.0,<7" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-aiohttp", specifier = ">=1.0.0" },
     { name = "pytest-qt", specifier = ">=4.5.0" },

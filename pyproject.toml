@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "local-dev-proxy"
-version = "0.0.5"
+version = "0.0.6"
 description = "Local development process orchestration with a built-in reverse proxy and manager UI"
 authors = [{ name = "Andrew Chen", email = "hello@andrewtheguy.com" }]
 readme = "README.md"
@@ -16,7 +16,7 @@ dependencies = [
   "filelock>=3.31.0",
   # Official Qt 6 Python bindings. The wheels include the cross-platform Qt
   # Widgets, model/view, and system-tray runtime used by the manager.
-  "PySide6>=6.9.0,<7",
+  "PySide6-Essentials>=6.9.0,<7",
 ]
 
 [project.gui-scripts]
@@ -31,6 +31,7 @@ dev = [
   "pytest>=8.0.0",
   "pytest-aiohttp>=1.0.0",
   "pytest-qt>=4.5.0",
+  "PySide6>=6.9.0,<7",
   "ruff>=0.14.6",
   "basedpyright>=1.29.0",
 ]
@@ -56,6 +57,12 @@ description = "Local reverse proxy and development process manager."
 long_description = "Local development process orchestration with a built-in reverse proxy and manager UI."
 sources = ["src/local_dev_proxy"]
 icon = "src/local_dev_proxy/assets/dock-icon"
+cleanup_paths = [
+  "**/app_packages/PySide6/**/QtTest",
+  "**/app_packages/PySide6/**/QtTest.*",
+  "**/app_packages/PySide6/**/Qt6Test.*",
+  "**/app_packages/PySide6/**/qttest.*",
+]
 
 [tool.briefcase.app.local-dev-proxy.macOS]
 min_os_version = "13.0"
