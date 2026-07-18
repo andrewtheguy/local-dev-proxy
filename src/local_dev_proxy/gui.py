@@ -83,9 +83,12 @@ def _tail_file(path: Path, lines: int) -> str:
 
 
 def _load_ui() -> object:
-    """Compile ui/manager.slint (works from a source tree or a wheel)."""
+    """Compile ui/manager.slint (works from a source tree or a wheel).
+
+    Force the Fluent style so the UI looks identical on macOS, Windows, and Linux.
+    """
     with resources.as_file(bundled_resource("ui/manager.slint")) as path:
-        return slint.load_file(str(path))
+        return slint.load_file(str(path), style="fluent")
 
 
 def _load_image(path: Path | None) -> object | None:
@@ -135,6 +138,8 @@ class ManagerController:
 
         self._refresh_timer = slint.Timer()
         self._signal_timer = slint.Timer()
+        # Deferred (post-layout) scroll of the log view to its newest line.
+        self._scroll_timer = slint.Timer()
 
         # Last-resort safety net: any interpreter exit still stops the children so
         # services never outlive the app. Idempotent.
@@ -454,6 +459,16 @@ class ManagerController:
         except KeyError as exc:
             body = f"[error] {exc}"
         self.window.log_text = body
+        self._pin_log_to_bottom()
+
+    def _pin_log_to_bottom(self) -> None:
+        # Defer a frame so the viewport height reflects the just-set text before
+        # we scroll to the newest line (mirrors the old Tk see("end")).
+        self._scroll_timer.start(
+            slint.TimerMode.SingleShot,
+            timedelta(milliseconds=16),
+            lambda: self.window.scroll_log_bottom(),
+        )
 
     def _on_select_log(self, _idx: int) -> None:
         self._refresh_logs()

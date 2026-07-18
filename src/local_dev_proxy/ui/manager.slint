@@ -1,4 +1,4 @@
-import { TabWidget, Button, ListView, TextEdit, ComboBox, SpinBox, CheckBox, GroupBox } from "std-widgets.slint";
+import { TabWidget, Button, ListView, TextEdit, ComboBox, SpinBox, CheckBox, GroupBox, ScrollView } from "std-widgets.slint";
 
 // One row of the Services table.
 export struct ServiceRow {
@@ -55,6 +55,8 @@ export component MainWindow inherits Window {
     in property <[RouteRow]> route_rows;
     in property <string> routes_banner;
 
+    in-out property <int> current_tab;
+
     // --- callbacks into the Python controller ---
     callback quit();
     callback show_readonly();
@@ -79,6 +81,13 @@ export component MainWindow inherits Window {
         root.status_level == 1 ? #007000 : root.status_level == 2 ? #b00000 : #303030
     }
 
+    // Pin the log view to its newest line (like `tail -f` / the old see("end")).
+    // Called from Python after the log text is refreshed (deferred a frame so the
+    // viewport height reflects the new content).
+    public function scroll_log_bottom() {
+        log_scroll.viewport-y = min(0px, log_scroll.visible-height - log_scroll.viewport-height);
+    }
+
     VerticalLayout {
         padding: 8px;
         spacing: 6px;
@@ -91,6 +100,7 @@ export component MainWindow inherits Window {
         }
 
         TabWidget {
+            current-index <=> root.current_tab;
             Tab {
                 title: "Services";
                 VerticalLayout {
@@ -156,13 +166,14 @@ export component MainWindow inherits Window {
                             }
                         }
                         GroupBox {
+                            vertical-stretch: 0;
                             title: root.sel_caption;
                             HorizontalLayout {
                                 spacing: 6px;
-                                Button { text: "Start"; enabled: root.can_start; clicked => { root.start_service(); } }
-                                Button { text: "Stop"; enabled: root.can_stop; clicked => { root.stop_service(); } }
-                                Button { text: "Restart"; enabled: root.can_restart; clicked => { root.restart_service(); } }
-                                Rectangle { horizontal-stretch: 1; }
+                                alignment: start;
+                                Button { text: "Start"; height: 28px; enabled: root.can_start; clicked => { root.start_service(); } }
+                                Button { text: "Stop"; height: 28px; enabled: root.can_stop; clicked => { root.stop_service(); } }
+                                Button { text: "Restart"; height: 28px; enabled: root.can_restart; clicked => { root.restart_service(); } }
                             }
                         }
                     }
@@ -211,11 +222,7 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     padding: 8px;
                     spacing: 6px;
-                    if root.editing: Text {
-                        text: "Services are stopped — start them (Services tab) to view logs.";
-                        color: #888888;
-                    }
-                    if !root.editing: HorizontalLayout {
+                    HorizontalLayout {
                         spacing: 8px;
                         Text { text: "Service:"; vertical-alignment: center; }
                         ComboBox {
@@ -238,10 +245,23 @@ export component MainWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; }
                         Button { text: "Refresh"; clicked => { root.refresh_logs(); } }
                     }
-                    if !root.editing: TextEdit {
+                    Rectangle {
                         vertical-stretch: 1;
-                        text: root.log_text;
-                        read-only: true;
+                        border-width: 1px;
+                        border-color: #cccccc;
+                        background: #ffffff;
+                        log_scroll := ScrollView {
+                            viewport-width: self.visible-width;
+                            viewport-height: log_text_el.preferred-height;
+                            log_text_el := Text {
+                                text: root.log_text;
+                                width: log_scroll.visible-width;
+                                wrap: word-wrap;
+                                font-family: "Menlo";
+                                font-size: 11px;
+                                color: #202020;
+                            }
+                        }
                     }
                 }
             }
@@ -271,10 +291,11 @@ export component MainWindow inherits Window {
                                     spacing: 8px;
                                     Text {
                                         text: row.text;
-                                        width: 240px;
+                                        width: 330px;
                                         font-weight: row.kind == "service-header" ? 700 : 400;
                                         color: row.muted ? #999999 : #000000;
                                         vertical-alignment: center;
+                                        overflow: elide;
                                     }
                                     Text {
                                         text: row.url;
