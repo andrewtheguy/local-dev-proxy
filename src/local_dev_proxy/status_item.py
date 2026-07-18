@@ -51,6 +51,17 @@ def install_status_item(icon_path: Path | None, on_click: Callable[[], None]) ->
         if icon_path is not None:
             image = AppKit.NSImage.alloc().initWithContentsOfFile_(str(icon_path))
         if image is not None:
+            # Scale to the menu-bar height; the raw PNG is far larger than a
+            # status item, so without this it renders enormous. Leave a couple
+            # points of padding, matching typical menu-bar icons (~18pt on a
+            # 22pt bar).
+            height = max(status_bar.thickness() - 4, 1)
+            size = image.size()
+            if size.height:
+                width = size.width * (height / size.height)
+            else:
+                width = height
+            image.setSize_(AppKit.NSMakeSize(width, height))
             image.setTemplate_(True)
             button.setImage_(image)
         else:
