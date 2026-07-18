@@ -71,7 +71,6 @@ from .config import (
     AlreadyRunningError,
     ProjectPaths,
     acquire_instance_lock,
-    consume_raise_request,
     dock_icon_path,
     ensure_config,
     icon_path,
@@ -695,9 +694,6 @@ class ManagerController:
     def _poll_signals(self) -> None:
         if self._shutdown_flag.is_set():
             self.quit()
-            return
-        if consume_raise_request():
-            self._show_window()
 
     def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason in {

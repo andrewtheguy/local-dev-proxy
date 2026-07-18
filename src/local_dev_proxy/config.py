@@ -18,17 +18,10 @@ _ICON_RESOURCE = "assets/tray-icon.png"
 _MACOS_ICON_RESOURCE = "assets/tray-icon-macos.png"
 _DOCK_ICON_RESOURCE = "assets/dock-icon.png"
 
-# Single-instance lock for the running manager (proxy + service manager). Backed
-# by ``filelock``, whose OS-level advisory lock is released automatically when the
-# holding process dies, so the lock never goes stale. A sidecar pidfile records
-# the holder's PID (the OS lock alone can't tell us who holds it cross-platform).
+# Single-instance guard for the running manager (proxy + service manager). The
+# advisory OS lock carries no commands or application data and is released
+# automatically when its holder dies, so it never goes stale.
 LOCK_PATH = os.path.join(tempfile.gettempdir(), "local-dev-proxy.lock")
-PID_PATH = os.path.join(tempfile.gettempdir(), "local-dev-proxy.pid")
-
-# Cross-platform "raise the running window" request. A second launch drops this
-# marker; the running manager polls for it and un-hides its window. Replaces the
-# Unix-only SIGUSR1 path so the same mechanism works on Windows.
-RAISE_REQUEST_PATH = os.path.join(tempfile.gettempdir(), "local-dev-proxy.raise")
 
 
 class AlreadyRunningError(RuntimeError):
@@ -36,8 +29,7 @@ class AlreadyRunningError(RuntimeError):
 
 
 def acquire_instance_lock() -> FileLock:
-    """Take the single-instance lock and record our PID; hold the returned lock
-    for the manager's lifetime and pass it to :func:`release_instance_lock`.
+    """Take and return the single-instance lock for the manager's lifetime.
 
     Raises :class:`AlreadyRunningError` if another manager already holds it.
     """
@@ -46,56 +38,24 @@ def acquire_instance_lock() -> FileLock:
         lock.acquire(timeout=0)
     except Timeout as exc:
         raise AlreadyRunningError("local-dev-proxy is already running.") from exc
-    Path(PID_PATH).write_text(str(os.getpid()))
     return lock
 
 
 def release_instance_lock(lock: FileLock) -> None:
-    """Release the single-instance lock and remove the sidecar pidfile."""
+    """Release the single-instance guard."""
     lock.release()
-    try:
-        os.remove(PID_PATH)
-    except OSError:
-        pass  # already gone (or another instance owns it now)
 
 
-def manager_pid() -> int | None:
-    """Return the PID of the running manager, or None if not running.
-
-    Probed via the single-instance lock: if we can take it (non-blocking) the
-    manager is not running; otherwise the sidecar pidfile names the holder.
-    """
+def manager_running() -> bool:
+    """Return whether another manager holds the single-instance guard."""
     lock = FileLock(LOCK_PATH)
     try:
         lock.acquire(timeout=0)
     except Timeout:
-        pass  # held -> manager is running
+        return True
     else:
         lock.release()
-        return None  # lock was free -> nobody running
-
-    try:
-        return int(Path(PID_PATH).read_text().strip())
-    except (OSError, ValueError):
-        return None  # pidfile missing/corrupt (e.g. mid-startup race)
-
-
-def manager_running() -> bool:
-    return manager_pid() is not None
-
-
-def request_raise() -> None:
-    """Ask the running manager to raise its window (cross-platform SIGUSR1)."""
-    Path(RAISE_REQUEST_PATH).write_text(str(os.getpid()))
-
-
-def consume_raise_request() -> bool:
-    """Return True (clearing the request) if a raise was requested since last call."""
-    try:
-        os.remove(RAISE_REQUEST_PATH)
-    except OSError:
         return False
-    return True
 
 
 @dataclass(frozen=True)

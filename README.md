@@ -95,9 +95,11 @@ uv run local-dev-proxy
 `uv run local-dev-proxy` **starts the app detached** (it returns your terminal
 immediately) and opens the **manager window**. It is a single process: the manager
 window owns the in-process reverse proxy and the service processes and calls them
-directly — there is no background admin port or IPC. A system-tray icon appears (in
-the macOS menu bar / Windows notification area / Linux tray); its menu has **Open
-Manager** and **Quit**. Running the command again just raises the existing window.
+directly — there is no background admin port or application-control IPC. A system-tray
+icon appears (in the macOS menu bar / Windows notification area / Linux tray); its menu
+has **Open Manager** and **Quit**. Running the command again reports that it is already
+running; use **Open Manager** from the tray to restore a hidden window. An advisory OS
+file lock prevents multiple app instances; it is not used as a command or data channel.
 
 ### Manager window
 
