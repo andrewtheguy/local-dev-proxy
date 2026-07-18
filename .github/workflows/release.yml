@@ -102,13 +102,22 @@ jobs:
       - name: Build macOS app bundle
         run: uvx --from briefcase==0.4.4 briefcase build macOS app --no-input
 
-      - name: Package macOS app as DMG
-        run: >-
-          uvx --from briefcase==0.4.4 briefcase package macOS app
-          --packaging-format dmg
-          --adhoc-sign
-          --no-notarize
-          --no-input
+      - name: Package macOS app as unsigned DMG
+        # Briefcase's package command requires either an Apple distribution
+        # certificate or an ad-hoc signature that it marks as non-distributable.
+        # The build step already produced the .app, so wrap it directly in a DMG.
+        run: |
+          mkdir -p dist/dmg-root
+          ditto \
+            "build/local-dev-proxy/macos/app/Local Dev Proxy.app" \
+            "dist/dmg-root/Local Dev Proxy.app"
+          ln -s /Applications "dist/dmg-root/Applications"
+          hdiutil create \
+            -volname "Local Dev Proxy" \
+            -srcfolder dist/dmg-root \
+            -format UDZO \
+            -ov \
+            dist/local-dev-proxy-macos-arm64.dmg
 
       - name: Upload macOS app artifact
         uses: actions/upload-artifact@v4
