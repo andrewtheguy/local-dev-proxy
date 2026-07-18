@@ -112,7 +112,6 @@ class ManagerApp:
         notebook.add(ServicesTab(notebook, self), text="Services")
         notebook.add(LogsTab(notebook, self), text="Logs")
         notebook.add(RoutesTab(notebook, self.paths), text="Routes")
-        notebook.add(ConfigTab(notebook, self), text="Config")
 
     def install_icon(self) -> None:
         self._status_handle = install_status_item(icon_path(), self._raise_flag.set)
@@ -166,16 +165,45 @@ class ManagerApp:
 
 
 class ServicesTab(ttk.Frame):
+    """Combined services + config tab.
+
+    While services are running it shows the live status list with per-service
+    Start / Stop / Restart. **Stop to Edit** stops everything and swaps the body
+    to the ``services.toml`` editor; **Start All** validates, saves, and starts,
+    swapping back to the list. The active view mirrors ``app.running``.
+    """
+
     COLUMNS = ("status", "pid", "restarts", "exit")
 
     def __init__(self, master: tk.Misc, app: ManagerApp) -> None:
         super().__init__(master, padding=8)
         self._app = app
+        self._mode: bool | None = None  # last-applied app.running; None until first refresh
 
         self._banner = ttk.Label(self, text="", foreground="#b00")
         self._banner.pack(fill="x", pady=(0, 4))
 
-        self._tree = ttk.Treeview(self, columns=self.COLUMNS, show="tree headings", height=8)
+        lifecycle = ttk.Frame(self)
+        lifecycle.pack(fill="x", pady=(0, 4))
+        self._toggle_btn = ttk.Button(lifecycle, text="Stop to Edit", command=self._toggle)
+        self._toggle_btn.pack(side="left")
+        self._status = ttk.Label(lifecycle, text="")
+        self._status.pack(side="right")
+
+        # Two stacked views; refresh() packs exactly one, based on the mode.
+        self._body = ttk.Frame(self)
+        self._body.pack(fill="both", expand=True)
+        self._service_view = self._build_service_view(self._body)
+        self._edit_view = self._build_edit_view(self._body)
+
+        self._load_file()
+        self.refresh()
+
+    # --- view construction ----------------------------------------------------
+
+    def _build_service_view(self, parent: tk.Misc) -> ttk.Frame:
+        view = ttk.Frame(parent)
+        self._tree = ttk.Treeview(view, columns=self.COLUMNS, show="tree headings", height=8)
         self._tree.heading("#0", text="service")
         self._tree.heading("status", text="status")
         self._tree.heading("pid", text="pid")
@@ -186,15 +214,79 @@ class ServicesTab(ttk.Frame):
             self._tree.column(col, width=90, anchor="center")
         self._tree.pack(fill="both", expand=True)
 
-        buttons = ttk.Frame(self)
+        buttons = ttk.Frame(view)
         buttons.pack(fill="x", pady=(6, 0))
         self._start_btn = ttk.Button(buttons, text="Start", command=lambda: self._act("start_service"))
         self._stop_btn = ttk.Button(buttons, text="Stop", command=lambda: self._act("stop_service"))
         self._restart_btn = ttk.Button(buttons, text="Restart", command=lambda: self._act("restart_service"))
         for btn in (self._start_btn, self._stop_btn, self._restart_btn):
             btn.pack(side="left", padx=(0, 6))
+        return view
 
-        self.refresh()
+    def _build_edit_view(self, parent: tk.Misc) -> ttk.Frame:
+        view = ttk.Frame(parent)
+        self._text = tk.Text(view, wrap="none", height=22, font=("Menlo", 11))
+        self._text.pack(fill="both", expand=True)
+
+        actions = ttk.Frame(view)
+        actions.pack(fill="x", pady=(6, 0))
+        self._validate_btn = ttk.Button(actions, text="Validate", command=self._validate)
+        self._save_btn = ttk.Button(actions, text="Save", command=self._save)
+        self._reload_btn = ttk.Button(actions, text="Reload from disk", command=self._load_file)
+        self._validate_btn.pack(side="left", padx=(0, 6))
+        self._save_btn.pack(side="left", padx=(0, 6))
+        self._reload_btn.pack(side="left")
+        return view
+
+    # --- mode / refresh -------------------------------------------------------
+
+    def _apply_mode(self, running: bool) -> None:
+        """Swap the body between the service list and the config editor."""
+        if running:
+            self._edit_view.pack_forget()
+            self._service_view.pack(fill="both", expand=True)
+            self._toggle_btn.config(text="Stop to Edit")
+            self._banner.config(text="")
+        else:
+            self._service_view.pack_forget()
+            self._edit_view.pack(fill="both", expand=True)
+            self._toggle_btn.config(text="Start All")
+            self._banner.config(
+                text="Editing configuration — Start All to validate, save, and launch."
+            )
+
+    def refresh(self, reschedule: bool = True) -> None:
+        running = self._app.running
+        if running != self._mode:
+            self._apply_mode(running)
+            self._mode = running
+
+        if running:
+            sm = self._app.service_manager
+            active = sm is not None
+            for btn in (self._start_btn, self._stop_btn, self._restart_btn):
+                btn.state(["!disabled"] if active else ["disabled"])
+            self._tree.delete(*self._tree.get_children())
+            if sm is not None:
+                for svc in sm.get_status():
+                    self._tree.insert(
+                        "", "end", text=str(svc["name"]),
+                        values=(
+                            svc["status"],
+                            svc["pid"] if svc["pid"] is not None else "-",
+                            svc["restart_count"],
+                            svc["exit_code"] if svc["exit_code"] is not None else "-",
+                        ),
+                    )
+        else:
+            self._text.config(state="normal")
+            for btn in (self._validate_btn, self._save_btn):
+                btn.state(["!disabled"])
+
+        if reschedule:
+            self.after(_POLL_MS, self.refresh)
+
+    # --- service view actions -------------------------------------------------
 
     def _selected(self) -> str | None:
         sel = self._tree.selection()
@@ -204,7 +296,6 @@ class ServicesTab(ttk.Frame):
         sm = self._app.service_manager
         name = self._selected()
         if sm is None or not self._app.running:
-            self._banner.config(text="Services are stopped.")
             return
         if not name:
             self._banner.config(text="Select a service first.")
@@ -216,32 +307,75 @@ class ServicesTab(ttk.Frame):
             self._banner.config(text=f"Error: {exc}")
         self.refresh(reschedule=False)
 
-    def refresh(self, reschedule: bool = True) -> None:
-        sm = self._app.service_manager
-        active = self._app.running and sm is not None
-        for btn in (self._start_btn, self._stop_btn, self._restart_btn):
-            btn.state(["!disabled"] if active else ["disabled"])
+    # --- lifecycle toggle -----------------------------------------------------
 
-        self._tree.delete(*self._tree.get_children())
-        if not active:
-            self._banner.config(text="Services are stopped (Config tab → Start).")
+    def _toggle(self) -> None:
+        if self._app.running:
+            self._stop_to_edit()
         else:
-            assert sm is not None
-            for svc in sm.get_status():
-                self._tree.insert(
-                    "", "end", text=str(svc["name"]),
-                    values=(
-                        svc["status"],
-                        svc["pid"] if svc["pid"] is not None else "-",
-                        svc["restart_count"],
-                        svc["exit_code"] if svc["exit_code"] is not None else "-",
-                    ),
-                )
-            if self._banner.cget("text").startswith("Services are stopped"):
-                self._banner.config(text="")
+            self._start_all()
 
-        if reschedule:
-            self.after(_POLL_MS, self.refresh)
+    def _stop_to_edit(self) -> None:
+        self._status.config(text="stopping…", foreground="#000")
+        self._app.stop_services()
+        self._load_file()  # reflect any on-disk changes when entering edit mode
+        self._status.config(text="stopped — editing", foreground="#000")
+        self.refresh(reschedule=False)
+
+    def _start_all(self) -> None:
+        # Start always saves; save always validates (see _persist / _validate).
+        if not self._persist():
+            return
+        self._status.config(text="starting…", foreground="#000")
+        try:
+            self._app.start_services()
+        except Exception as exc:  # config may be invalid at start time
+            self._status.config(text=f"start failed: {exc}", foreground="#b00")
+            return
+        self._status.config(text="saved & started ✓", foreground="#070")
+        self.refresh(reschedule=False)
+
+    # --- config editor --------------------------------------------------------
+
+    def _load_file(self) -> None:
+        try:
+            content = self._app.paths.services_file.read_text()
+        except OSError as exc:
+            content = ""
+            self._status.config(text=f"read error: {exc}", foreground="#b00")
+        self._text.config(state="normal")
+        self._text.delete("1.0", "end")
+        self._text.insert("1.0", content)
+
+    def _validate(self) -> bool:
+        text = self._text.get("1.0", "end-1c")
+        try:
+            validate_toml(text)
+        except RouteConfigError as exc:
+            self._status.config(text="invalid", foreground="#b00")
+            self._banner.config(text=str(exc))
+            return False
+        self._status.config(text="valid ✓", foreground="#070")
+        return True
+
+    def _persist(self) -> bool:
+        """Validate the editor buffer and write it to disk. Returns True on success."""
+        if self._app.running:
+            self._status.config(text="stop services first", foreground="#b00")
+            return False
+        if not self._validate():
+            return False
+        text = self._text.get("1.0", "end-1c")
+        try:
+            self._app.paths.services_file.write_text(text)
+        except OSError as exc:
+            self._status.config(text=f"write error: {exc}", foreground="#b00")
+            return False
+        return True
+
+    def _save(self) -> None:
+        if self._persist():
+            self._status.config(text="saved ✓", foreground="#070")
 
 
 class LogsTab(ttk.Frame):
@@ -353,116 +487,6 @@ class RoutesTab(ttk.Frame):
         if sel:
             url = self._tree.item(sel[0], "values")[0]
             webbrowser.open(url)
-
-
-class ConfigTab(ttk.Frame):
-    def __init__(self, master: tk.Misc, app: ManagerApp) -> None:
-        super().__init__(master, padding=8)
-        self._app = app
-
-        self._banner = ttk.Label(self, text="", foreground="#b00")
-        self._banner.pack(fill="x")
-
-        lifecycle = ttk.Frame(self)
-        lifecycle.pack(fill="x", pady=(0, 4))
-        self._stop_btn = ttk.Button(lifecycle, text="Stop to Edit", command=self._stop)
-        self._start_btn = ttk.Button(lifecycle, text="Start", command=self._start)
-        self._stop_btn.pack(side="left", padx=(0, 6))
-        self._start_btn.pack(side="left")
-
-        self._text = tk.Text(self, wrap="none", height=22, font=("Menlo", 11))
-        self._text.pack(fill="both", expand=True)
-
-        actions = ttk.Frame(self)
-        actions.pack(fill="x", pady=(6, 0))
-        self._validate_btn = ttk.Button(actions, text="Validate", command=self._validate)
-        self._save_btn = ttk.Button(actions, text="Save", command=self._save)
-        self._reload_btn = ttk.Button(actions, text="Reload from disk", command=self._load_file)
-        self._validate_btn.pack(side="left", padx=(0, 6))
-        self._save_btn.pack(side="left", padx=(0, 6))
-        self._reload_btn.pack(side="left")
-        self._status = ttk.Label(actions, text="")
-        self._status.pack(side="right")
-
-        self._load_file()
-        self.refresh()
-
-    def _load_file(self) -> None:
-        try:
-            content = self._app.paths.services_file.read_text()
-        except OSError as exc:
-            content = ""
-            self._status.config(text=f"read error: {exc}")
-        self._text.delete("1.0", "end")
-        self._text.insert("1.0", content)
-
-    def refresh(self, reschedule: bool = True) -> None:
-        running = self._app.running
-        if running:
-            self._banner.config(text="Services are running — stop them to edit the configuration.")
-            self._text.config(state="disabled")
-            self._stop_btn.state(["!disabled"])
-            self._start_btn.state(["disabled"])
-            for btn in (self._validate_btn, self._save_btn):
-                btn.state(["disabled"])
-        else:
-            self._banner.config(text="Services are stopped — edit, then Start to apply (Start also saves).")
-            self._text.config(state="normal")
-            self._stop_btn.state(["disabled"])
-            self._start_btn.state(["!disabled"])
-            for btn in (self._validate_btn, self._save_btn):
-                btn.state(["!disabled"])
-        if reschedule:
-            self.after(_POLL_MS, self.refresh)
-
-    def _stop(self) -> None:
-        self._status.config(text="stopping…")
-        self._app.stop_services()
-        self._status.config(text="stopped")
-        self.refresh(reschedule=False)
-
-    def _start(self) -> None:
-        # Persist the editor buffer first so Start always applies what's on screen.
-        if not self._persist():
-            return
-        self._status.config(text="starting…")
-        try:
-            self._app.start_services()
-        except Exception as exc:  # config may be invalid at start time
-            self._status.config(text=f"start failed: {exc}", foreground="#b00")
-            return
-        self._status.config(text="saved & started ✓", foreground="#070")
-        self.refresh(reschedule=False)
-
-    def _validate(self) -> bool:
-        text = self._text.get("1.0", "end-1c")
-        try:
-            validate_toml(text)
-        except RouteConfigError as exc:
-            self._status.config(text="invalid", foreground="#b00")
-            self._banner.config(text=str(exc))
-            return False
-        self._status.config(text="valid ✓", foreground="#070")
-        return True
-
-    def _persist(self) -> bool:
-        """Validate the editor buffer and write it to disk. Returns True on success."""
-        if self._app.running:
-            self._status.config(text="stop services first", foreground="#b00")
-            return False
-        if not self._validate():
-            return False
-        text = self._text.get("1.0", "end-1c")
-        try:
-            self._app.paths.services_file.write_text(text)
-        except OSError as exc:
-            self._status.config(text=f"write error: {exc}", foreground="#b00")
-            return False
-        return True
-
-    def _save(self) -> None:
-        if self._persist():
-            self._status.config(text="saved ✓", foreground="#070")
 
 
 def run_gui() -> None:
