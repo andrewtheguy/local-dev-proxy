@@ -65,6 +65,20 @@ def test_bundled_sample_covers_supported_service_and_target_forms() -> None:
     assert services["worker_example"].disabled
     assert services["worker_example"].routes == []
 
+    env_only_socket = services["env_only_socket_example"]
+    assert env_only_socket.disabled
+    assert env_only_socket.env == {"EXAMPLE_APP_SOCKET": "env-only-example.sock"}
+    assert env_only_socket.command == ["placeholder-env-aware-http-server"]
+    assert env_only_socket.routes[0].target_socket_env == "EXAMPLE_APP_SOCKET"
+
+    inherited_env_socket = services["inherited_env_socket_example"]
+    assert inherited_env_socket.disabled
+    assert inherited_env_socket.env == {}
+    assert inherited_env_socket.command == ["placeholder-env-aware-http-server"]
+    assert (
+        inherited_env_socket.routes[0].target_socket_env == "INHERITED_APP_SOCKET"
+    )
+
     target_forms: set[str] = set()
     port_target_hosts: set[str | None] = set()
     has_exact_host = False

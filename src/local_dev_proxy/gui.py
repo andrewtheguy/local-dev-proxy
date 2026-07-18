@@ -15,6 +15,7 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import re
 import signal
 import sys
 import threading
@@ -42,6 +43,9 @@ from PySide6.QtGui import (
     QKeySequence,
     QStandardItem,
     QStandardItemModel,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextDocument,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -158,10 +162,16 @@ def _icon(path: Path | None) -> QIcon:
     return icon
 
 
-def _monospace_font(point_size: int = 11) -> QFont:
-    font = QFont("Menlo")
+def _monospace_font(
+    point_size: int | None = None, weight: QFont.Weight | None = None
+) -> QFont:
+    font = QFont(QApplication.font())
+    font.setFamily("Menlo")
     font.setStyleHint(QFont.StyleHint.Monospace)
-    font.setPointSize(point_size)
+    if point_size is not None:
+        font.setPointSize(point_size)
+    if weight is not None:
+        font.setWeight(weight)
     return font
 
 
@@ -169,6 +179,189 @@ def _read_only_item(text: object) -> QStandardItem:
     item = QStandardItem(str(text))
     item.setEditable(False)
     return item
+
+
+def _toml_format(
+    color: str, *, weight: QFont.Weight | None = None, italic: bool = False
+) -> QTextCharFormat:
+    text_format = QTextCharFormat()
+    text_format.setForeground(QColor(color))
+    if weight is not None:
+        text_format.setFontWeight(weight)
+    text_format.setFontItalic(italic)
+    return text_format
+
+
+class _TomlSyntaxHighlighter(QSyntaxHighlighter):
+    """Highlight the TOML constructs used by the service configuration."""
+
+    _MULTILINE_BASIC = 1
+    _MULTILINE_LITERAL = 2
+    _BOOLEAN = re.compile(r"\b(?:true|false)\b")
+    _DATE_TIME = re.compile(
+        r"(?<![\w])(?:"
+        r"\d{4}-\d{2}-\d{2}"
+        r"(?:[Tt ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})?)?"
+        r"|\d{2}:\d{2}:\d{2}(?:\.\d+)?"
+        r")(?![\w])"
+    )
+    _NUMBER = re.compile(
+        r"(?<![\w])(?:[+-]?(?:"
+        r"0x[0-9A-Fa-f](?:_?[0-9A-Fa-f])*"
+        r"|0o[0-7](?:_?[0-7])*"
+        r"|0b[01](?:_?[01])*"
+        r"|\d(?:_?\d)*(?:\.\d(?:_?\d)*)?(?:[eE][+-]?\d(?:_?\d)*)?"
+        r"|inf|nan"
+        r"))(?![\w])"
+    )
+
+    def __init__(self, document: QTextDocument) -> None:
+        super().__init__(document)
+        self._table_format = _toml_format("#6941c6", weight=QFont.Weight.DemiBold)
+        self._key_format = _toml_format("#175cd3")
+        self._string_format = _toml_format("#067647")
+        self._literal_format = _toml_format(
+            "#b54708", weight=QFont.Weight.DemiBold
+        )
+        self._comment_format = _toml_format("#667085", italic=True)
+
+    def _format_span(
+        self,
+        start: int,
+        end: int,
+        text_format: QTextCharFormat,
+        protected: bytearray,
+    ) -> None:
+        self.setFormat(start, end - start, text_format)
+        protected[start:end] = b"\x01" * (end - start)
+
+    def _highlight_strings_and_comment(self, text: str) -> tuple[bytearray, int]:
+        protected = bytearray(len(text))
+        comment_start = len(text)
+        state = self.previousBlockState()
+        if state not in (self._MULTILINE_BASIC, self._MULTILINE_LITERAL):
+            state = 0
+        position = 0
+
+        while position < len(text):
+            if state:
+                delimiter = '"""' if state == self._MULTILINE_BASIC else "'''"
+                end = text.find(delimiter, position)
+                if end < 0:
+                    self._format_span(
+                        position,
+                        len(text),
+                        self._string_format,
+                        protected,
+                    )
+                    self.setCurrentBlockState(state)
+                    return protected, comment_start
+                end += len(delimiter)
+                self._format_span(position, end, self._string_format, protected)
+                position = end
+                state = 0
+                continue
+
+            if text[position] == "#":
+                comment_start = position
+                self._format_span(
+                    position,
+                    len(text),
+                    self._comment_format,
+                    protected,
+                )
+                break
+
+            delimiter = text[position : position + 3]
+            if delimiter in ('"""', "'''"):
+                state = (
+                    self._MULTILINE_BASIC
+                    if delimiter == '"""'
+                    else self._MULTILINE_LITERAL
+                )
+                end = text.find(delimiter, position + 3)
+                if end < 0:
+                    self._format_span(
+                        position,
+                        len(text),
+                        self._string_format,
+                        protected,
+                    )
+                    self.setCurrentBlockState(state)
+                    return protected, comment_start
+                end += len(delimiter)
+                self._format_span(position, end, self._string_format, protected)
+                position = end
+                state = 0
+                continue
+
+            quote = text[position]
+            if quote not in ('"', "'"):
+                position += 1
+                continue
+
+            end = position + 1
+            while end < len(text):
+                if quote == '"' and text[end] == "\\":
+                    end += 2
+                    continue
+                if text[end] == quote:
+                    end += 1
+                    break
+                end += 1
+            self._format_span(position, min(end, len(text)), self._string_format, protected)
+            position = end
+
+        self.setCurrentBlockState(0)
+        return protected, comment_start
+
+    @staticmethod
+    def _is_unprotected(protected: bytearray, start: int, end: int) -> bool:
+        return not any(protected[start:end])
+
+    def highlightBlock(self, text: str) -> None:
+        protected, code_end = self._highlight_strings_and_comment(text)
+        content_start = len(text) - len(text.lstrip())
+        content_end = len(text[:code_end].rstrip())
+
+        if (
+            content_start < content_end
+            and text[content_start] == "["
+            and text[content_end - 1] == "]"
+            and not protected[content_start]
+            and not protected[content_end - 1]
+        ):
+            self.setFormat(
+                content_start,
+                content_end - content_start,
+                self._table_format,
+            )
+            return
+
+        equals = next(
+            (
+                index
+                for index, character in enumerate(text[:code_end])
+                if character == "=" and not protected[index]
+            ),
+            -1,
+        )
+        value_start = 0
+        if equals >= 0:
+            key_start = len(text[:equals]) - len(text[:equals].lstrip())
+            key_end = len(text[:equals].rstrip())
+            if key_start < key_end:
+                self.setFormat(key_start, key_end - key_start, self._key_format)
+            value_start = equals + 1
+
+        for pattern in (self._DATE_TIME, self._NUMBER, self._BOOLEAN):
+            for match in pattern.finditer(text, value_start, code_end):
+                if self._is_unprotected(protected, match.start(), match.end()):
+                    self.setFormat(
+                        match.start(),
+                        match.end() - match.start(),
+                        self._literal_format,
+                    )
 
 
 class ManagerWindow(QMainWindow):
@@ -190,9 +383,11 @@ class ManagerWindow(QMainWindow):
     restart_service_button: QPushButton
     readonly_view: QWidget
     readonly_config: QPlainTextEdit
+    readonly_highlighter: _TomlSyntaxHighlighter
     edit_config_button: QPushButton
     editor_view: QWidget
     config_editor: QPlainTextEdit
+    editor_highlighter: _TomlSyntaxHighlighter
     start_all_button: QPushButton
     validate_button: QPushButton
     save_button: QPushButton
@@ -351,6 +546,9 @@ class ManagerWindow(QMainWindow):
         self.readonly_config.setReadOnly(True)
         self.readonly_config.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.readonly_config.setFont(_monospace_font())
+        self.readonly_highlighter = _TomlSyntaxHighlighter(
+            self.readonly_config.document()
+        )
         readonly_layout.addWidget(self.readonly_config, 1)
         self.services_stack.addWidget(self.readonly_view)
 
@@ -362,6 +560,7 @@ class ManagerWindow(QMainWindow):
         self.config_editor.setObjectName("config_editor")
         self.config_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.config_editor.setFont(_monospace_font())
+        self.editor_highlighter = _TomlSyntaxHighlighter(self.config_editor.document())
         editor_layout.addWidget(self.config_editor, 1)
         editor_actions = QHBoxLayout()
         self.validate_button = QPushButton("Validate", self.editor_view)
@@ -417,7 +616,7 @@ class ManagerWindow(QMainWindow):
         self.log_text = QPlainTextEdit(self.logs_tab)
         self.log_text.setObjectName("log_text")
         self.log_text.setReadOnly(True)
-        self.log_text.setFont(_monospace_font(10))
+        self.log_text.setFont(_monospace_font(10, QFont.Weight.Medium))
         self.log_text.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         layout.addWidget(self.log_text, 1)
         self.tabs.addTab(self.logs_tab, "Logs")
@@ -489,6 +688,10 @@ class ManagerWindow(QMainWindow):
                 background: #ffffff; border: 1px solid #98a2b3;
                 selection-background-color: #cfe1f7; selection-color: #101828;
             }
+            QPlainTextEdit[readOnly="true"] {
+                background: #f2f4f7; color: #475467; border-color: #d0d5dd;
+            }
+            QPlainTextEdit#log_text { color: #1d2939; }
             QHeaderView::section {
                 background: #eaecf0; color: #344054; padding: 6px;
                 border: 0; border-right: 1px solid #d0d5dd;
@@ -627,6 +830,7 @@ class ManagerController:
         window.service_tree.selectionModel().selectionChanged.connect(
             self._on_row_selected
         )
+        window.service_tree.doubleClicked.connect(self._open_service_logs)
         window.config_editor.textChanged.connect(self._on_config_edited)
         window.log_service_combo.currentIndexChanged.connect(self._on_select_log)
         window.log_lines_spin.valueChanged.connect(lambda _value: self._refresh_logs())
@@ -842,6 +1046,23 @@ class ManagerController:
         elif not self.window.service_tree.selectionModel().hasSelection():
             self._selected_name = None
         self._update_service_controls()
+
+    def _open_service_logs(self, index: QModelIndex) -> None:
+        service_index = index.siblingAtColumn(0)
+        value = service_index.data(Qt.ItemDataRole.UserRole)
+        if value is None:
+            return
+
+        self._populate_log_services()
+        combo = self.window.log_service_combo
+        log_index = combo.findText(str(value), Qt.MatchFlag.MatchExactly)
+        if log_index < 0:
+            return
+
+        with QSignalBlocker(combo):
+            combo.setCurrentIndex(log_index)
+        self.window.tabs.setCurrentWidget(self.window.logs_tab)
+        self._refresh_logs()
 
     def _act(self, method: str) -> None:
         manager = self.service_manager
