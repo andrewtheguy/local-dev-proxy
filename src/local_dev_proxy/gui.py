@@ -302,17 +302,14 @@ class ManagerController:
                 name = str(svc["name"])
                 names.append(name)
                 status_by_name[name] = str(svc["status"])
-                # A StandardTableView row is a model of StandardListViewItem cells.
                 rows.append(
-                    slint.ListModel(
-                        [
-                            {"text": name},
-                            {"text": str(svc["status"])},
-                            {"text": "-" if svc["pid"] is None else str(svc["pid"])},
-                            {"text": str(svc["restart_count"])},
-                            {"text": "-" if svc["exit_code"] is None else str(svc["exit_code"])},
-                        ]
-                    )
+                    {
+                        "name": name,
+                        "status": str(svc["status"]),
+                        "pid": "-" if svc["pid"] is None else str(svc["pid"]),
+                        "restarts": str(svc["restart_count"]),
+                        "exit": "-" if svc["exit_code"] is None else str(svc["exit_code"]),
+                    }
                 )
         self._display_names = names
         self._status_by_name = status_by_name
