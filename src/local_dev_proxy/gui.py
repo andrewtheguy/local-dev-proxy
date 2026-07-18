@@ -134,9 +134,27 @@ class ManagerApp:
 
         notebook = ttk.Notebook(self.root)
         notebook.pack(fill="both", expand=True, padx=8, pady=8)
-        notebook.add(ServicesTab(notebook, self), text="Services")
-        notebook.add(LogsTab(notebook, self), text="Logs")
-        notebook.add(RoutesTab(notebook, self.paths), text="Routes")
+        self._notebook = notebook
+        self._services_tab = ServicesTab(notebook, self)
+        self._logs_tab = LogsTab(notebook, self)
+        self._routes_tab = RoutesTab(notebook, self.paths)
+        notebook.add(self._services_tab, text="Services")
+        notebook.add(self._logs_tab, text="Logs")
+        notebook.add(self._routes_tab, text="Routes")
+        # Sync tab availability with the initial run state.
+        self.set_editing(not self.running)
+
+    def set_editing(self, editing: bool) -> None:
+        """While the config is being edited (services stopped), Logs and Routes
+        show stale data, so disable them and keep focus on the Services tab."""
+        notebook = getattr(self, "_notebook", None)
+        if notebook is None or getattr(self, "_logs_tab", None) is None:
+            return  # tabs not built yet (initial ServicesTab refresh)
+        if editing:
+            notebook.select(self._services_tab)
+        state = "disabled" if editing else "normal"
+        for tab in (self._logs_tab, self._routes_tab):
+            notebook.tab(tab, state=state)
 
     def install_icon(self) -> None:
         self._status_handle = install_status_item(icon_path(), self._raise_flag.set)
@@ -278,18 +296,35 @@ class ServicesTab(ttk.Frame):
 
     def _build_edit_view(self, parent: tk.Misc) -> ttk.Frame:
         view = ttk.Frame(parent)
-        self._text = tk.Text(view, wrap="none", height=22, font=("Menlo", 11))
-        self._text.pack(fill="both", expand=True)
 
+        # Pack the actions bar first, pinned to the bottom, so it stays visible
+        # no matter how tall the (expanding) editor grows.
         actions = ttk.Frame(view)
-        actions.pack(fill="x", pady=(6, 0))
+        actions.pack(side="bottom", fill="x", pady=(6, 0))
         self._validate_btn = ttk.Button(actions, text="Validate", command=self._validate)
         self._save_btn = ttk.Button(actions, text="Save", command=self._save)
-        self._reload_btn = ttk.Button(actions, text="Reload from disk", command=self._load_file)
+        self._reload_btn = ttk.Button(actions, text="Reload from disk", command=self._reload)
         self._validate_btn.pack(side="left", padx=(0, 6))
         self._save_btn.pack(side="left", padx=(0, 6))
         self._reload_btn.pack(side="left")
+        self._dirty_label = ttk.Label(actions, text="")
+        self._dirty_label.pack(side="right")
+
+        self._text = tk.Text(view, wrap="none", height=22, font=("Menlo", 11), undo=True)
+        self._text.pack(side="top", fill="both", expand=True)
+        self._text.bind("<<Modified>>", self._on_text_modified)
         return view
+
+    def _on_text_modified(self, _event: object = None) -> None:
+        # <<Modified>> fires whenever the buffer's modified flag flips; mirror it
+        # into the unsaved-changes indicator. (_load_file / _persist reset it.)
+        self._set_dirty(bool(self._text.edit_modified()))
+
+    def _set_dirty(self, dirty: bool) -> None:
+        self._dirty_label.config(
+            text="● unsaved changes" if dirty else "",
+            foreground="#b26a00",
+        )
 
     # --- mode / refresh -------------------------------------------------------
 
@@ -307,6 +342,8 @@ class ServicesTab(ttk.Frame):
             self._banner.config(
                 text="Editing configuration — Start All to validate, save, and launch."
             )
+        # Logs/Routes are meaningful only while services run.
+        self._app.set_editing(not running)
 
     def refresh(self, reschedule: bool = True) -> None:
         running = self._app.running
@@ -406,6 +443,11 @@ class ServicesTab(ttk.Frame):
         self._text.config(state="normal")
         self._text.delete("1.0", "end")
         self._text.insert("1.0", content)
+        self._text.edit_modified(False)  # freshly loaded buffer matches disk
+
+    def _reload(self) -> None:
+        self._load_file()
+        self._status.config(text="reloaded from disk", foreground="#000")
 
     def _validate(self) -> bool:
         text = self._text.get("1.0", "end-1c")
@@ -431,6 +473,7 @@ class ServicesTab(ttk.Frame):
         except OSError as exc:
             self._status.config(text=f"write error: {exc}", foreground="#b00")
             return False
+        self._text.edit_modified(False)  # buffer now matches disk
         return True
 
     def _save(self) -> None:
