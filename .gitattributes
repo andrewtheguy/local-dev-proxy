@@ -1,0 +1,5 @@
+# The GUI reads/writes config via text mode (newlines normalized to LF), while the
+# E2E tests compare that text against the fixtures read as raw bytes. Force these
+# files to check out with LF on every platform so the comparison holds on Windows.
+tests/fixtures/*.toml text eol=lf
+src/local_dev_proxy/services.toml.sample text eol=lf

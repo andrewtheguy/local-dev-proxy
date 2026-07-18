@@ -20,8 +20,19 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    # Run Qt without a display; the GUI E2E tests grab widgets off-screen.
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
+
+      # PySide6 links against system Qt libraries that GitHub's headless Linux
+      # runners don't ship (e.g. libEGL); Windows/macOS wheels are self-contained.
+      - name: Install Qt system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6

@@ -14,7 +14,7 @@ Install directly from a release asset URL — no checkout, no index config. Grab
 URL from the [Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
 
 ```shell
-uv tool install https://github.com/andrewtheguy/local-dev-proxy/releases/download/vx.x.x/local_dev_proxy-vx.x.x-py3-none-any.whl
+uv tool install https://github.com/andrewtheguy/local-dev-proxy/releases/download/vx.y.z/local_dev_proxy-x.y.z-py3-none-any.whl
 ```
 
 Then run it with `local-dev-proxy`.
