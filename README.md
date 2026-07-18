@@ -1,4 +1,4 @@
-Local dev proxy: built-in reverse proxy + process manager with a macOS menu bar app.
+Local dev proxy: built-in reverse proxy + process manager with a macOS menu bar app and a Tkinter manager UI.
 
 ## What you get
 
@@ -18,28 +18,50 @@ Local dev proxy: built-in reverse proxy + process manager with a macOS menu bar 
 
 ## Configuration
 
-Everything lives in `services.toml`: proxy settings (`http_port`, `bind`), service commands, env/ports, and routes.
+Configuration lives in a per-user file:
+
+```
+~/.config/local-dev-proxy/services.toml
+```
+
+(honors `$XDG_CONFIG_HOME`). On first run it is created automatically from the bundled
+sample. It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and
+routes. Logs are written next to it under `~/.config/local-dev-proxy/logs/`.
+
+Edit it from the **Config** tab of the manager window (the config is only editable while
+the manager is stopped — the tab has a *Stop Manager* button), or by hand.
 
 ## Usage
 
 ```sh
 uv sync
-uv run local-dev-proxy start-manager
+uv run local-dev-proxy
 ```
 
-This starts a macOS menu bar app that runs an in-process reverse proxy and manages service processes directly. Click a service name in the tray menu to open it in your browser.
+Running `uv run local-dev-proxy` with no arguments **starts the manager detached** (it
+returns your terminal immediately) and opens the **manager window**. The manager runs an
+in-process reverse proxy, manages service processes, and shows a macOS menu bar icon.
+Run it again to reopen the manager window.
 
-### CLI commands
+### Manager window
+
+A Tkinter window with four tabs:
+
+- **Services** — status, PID, restart count and exit code for every service, with
+  Start / Stop / Restart buttons.
+- **Logs** — view or follow (tail) any service's log.
+- **Routes** — every service URL; double-click to open it in your browser.
+- **Config** — edit `services.toml`, Validate, and Save. Editing is locked while the
+  manager is running; use *Stop Manager* first. Changes apply on the next start.
+
+### Lifecycle commands
 
 ```sh
-uv run local-dev-proxy routes             # List all service URLs
-uv run local-dev-proxy status             # Show service status, PIDs, restart counts
-uv run local-dev-proxy logs <name>        # Show last 100 lines of a service log
-uv run local-dev-proxy logs <name> -f     # Follow (tail) a service log
-uv run local-dev-proxy restart <name>     # Restart a managed service
-uv run local-dev-proxy stop <name>        # Stop a managed service
-uv run local-dev-proxy start <name>       # Start a stopped managed service
-uv run local-dev-proxy sync              # Push routes to the running proxy
+uv run local-dev-proxy                 # Start detached + open the manager window
+uv run local-dev-proxy gui             # Just open the manager window
+uv run local-dev-proxy stop-manager    # Stop the running manager
+uv run local-dev-proxy restart-manager # Restart the manager (detached)
+uv run local-dev-proxy start-manager -f  # Run the manager in the foreground (blocking)
 ```
 
 ## How to add a service
@@ -69,7 +91,8 @@ hosts = ["webapp.localhost"]
 target_port = 3000
 ```
 
-For services managed externally (not started by the proxy), omit `command` to create an unmanaged proxy-only route:
+For services managed externally (not started by the proxy), omit `command` to create an
+unmanaged proxy-only route:
 
 ```toml
 [services.vite]
@@ -80,8 +103,12 @@ hosts = ["vite.localhost"]
 target_port = 5173
 ```
 
+The bundled defaults live in `src/local_dev_proxy/services.toml.sample`.
+
 ## Troubleshooting
 
-- **Service URL not proxying:** run `uv run local-dev-proxy status` to check the service state, and confirm the port is set in `services.toml`.
-- **Proxy not responding:** check the tray app console output for errors. Restart with `uv run local-dev-proxy start-manager`.
-- **View service logs:** run `uv run local-dev-proxy logs <name> -f` to tail the log output.
+- **Service URL not proxying:** open the manager window's **Services** tab to check the
+  service state, and confirm the port is set in `services.toml`.
+- **Proxy not responding:** check `~/.config/local-dev-proxy/logs/manager.log` for
+  startup errors. Restart with `uv run local-dev-proxy restart-manager`.
+- **View service logs:** use the **Logs** tab (with *Follow* for a live tail).

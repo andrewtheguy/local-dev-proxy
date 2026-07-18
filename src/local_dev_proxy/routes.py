@@ -39,8 +39,22 @@ def load_routes(path: Path) -> RoutesManifest:
     if not path.exists():
         raise RouteConfigError(f"Services manifest not found: {path}")
 
-    data = tomllib.loads(path.read_text())
+    return build_manifest(tomllib.loads(path.read_text()))
 
+
+def validate_toml(text: str) -> RoutesManifest:
+    """Parse and validate raw TOML text, raising RouteConfigError on any issue.
+
+    Used by the config editor to check edits without touching the filesystem.
+    """
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise RouteConfigError(f"Invalid TOML: {exc}") from exc
+    return build_manifest(data)
+
+
+def build_manifest(data: dict[str, object]) -> RoutesManifest:
     http_port = _parse_int(data.get("http_port", 2800), "http_port")
 
     bind = data.get("bind", ["127.0.0.1", "::1"])

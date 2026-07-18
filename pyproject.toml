@@ -28,6 +28,11 @@ default-groups = ["dev"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/local_dev_proxy"]
+# Ship bundled runtime resources (tray icon + sample config) inside the wheel.
+artifacts = [
+  "src/local_dev_proxy/assets/*",
+  "src/local_dev_proxy/services.toml.sample",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

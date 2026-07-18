@@ -6,18 +6,24 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import webbrowser
 
 import rumps
 
-from .config import get_paths
+from .config import LOCK_PATH, ensure_config, icon_path
 from .routes import load_routes
 from .services import start_proxy, start_services_managed
+
+# Set by the OS signal handlers; polled from the Cocoa run loop by a rumps.Timer.
+# Python signal handlers do not run while blocked in [NSApp run], so the timer
+# tick is what gives the interpreter a chance to deliver the pending signal.
+_shutdown_requested = threading.Event()
 
 
 class LocalDevProxyApp(rumps.App):
     def __init__(self) -> None:
-        self._paths = get_paths()
+        self._paths = ensure_config()
         self._manifest = load_routes(self._paths.services_file)
 
         menu_items: list[rumps.MenuItem | None] = []
@@ -38,10 +44,17 @@ class LocalDevProxyApp(rumps.App):
                 self._url_map[route.id] = url
 
         menu_items.append(None)  # separator
+        menu_items.append(rumps.MenuItem("Manage…", callback=self._open_manager))
         menu_items.append(rumps.MenuItem("Open Logs Folder", callback=self._open_logs_folder))
 
-        icon_path = str(self._paths.root / "assets" / "tray-icon.png")
-        super().__init__("LocalDevProxy", icon=icon_path, template=True, menu=menu_items, quit_button=None)
+        icon = icon_path()
+        super().__init__(
+            "LocalDevProxy",
+            icon=str(icon) if icon else None,
+            template=True,
+            menu=menu_items,
+            quit_button=None,
+        )
         self.title = None
 
         self._service_manager = start_services_managed(self._paths)
@@ -52,13 +65,29 @@ class LocalDevProxyApp(rumps.App):
         self._cleaned_up = False
         atexit.register(self._cleanup)
 
+        # Poll for a requested shutdown (SIGTERM/SIGINT) from within the run loop.
+        self._shutdown_timer = rumps.Timer(self._poll_shutdown, 0.5)
+        self._shutdown_timer.start()
+
+    def _poll_shutdown(self, _timer: rumps.Timer) -> None:
+        if _shutdown_requested.is_set():
+            self._shutdown_timer.stop()
+            self._cleanup()
+            rumps.quit_application()
+
     def _open_url(self, sender: rumps.MenuItem) -> None:
         url = self._url_map.get(sender.title)
         if url:
             webbrowser.open(url)
 
+    def _open_manager(self, _sender: rumps.MenuItem) -> None:
+        subprocess.Popen(
+            [sys.executable, "-m", "local_dev_proxy", "gui"],
+            start_new_session=True,
+        )
+
     def _open_logs_folder(self, _sender: rumps.MenuItem) -> None:
-        log_dir = self._paths.root / "logs"
+        log_dir = self._paths.logs_dir
         log_dir.mkdir(parents=True, exist_ok=True)
         subprocess.Popen(["open", str(log_dir)])
 
@@ -76,12 +105,9 @@ class LocalDevProxyApp(rumps.App):
         self._service_manager.stop_all()
 
 
-_LOCK_PATH = os.path.join(os.environ.get("TMPDIR", "/tmp"), "local-dev-proxy.lock")
-
-
 def _acquire_lock() -> int:
     """Acquire an exclusive lock file. Returns the fd (kept open for lifetime of process)."""
-    fd = os.open(_LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o644)
+    fd = os.open(LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o644)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -95,9 +121,10 @@ def run_tray() -> None:
     lock_fd = _acquire_lock()
     app = LocalDevProxyApp()
 
-    def _signal_handler(signum: int, _frame: object) -> None:
-        app._cleanup()
-        sys.exit(0)
+    def _signal_handler(_signum: int, _frame: object) -> None:
+        # Keep this minimal: just flag the request. The rumps.Timer in the app
+        # polls the flag from the run loop and performs the actual shutdown.
+        _shutdown_requested.set()
 
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
