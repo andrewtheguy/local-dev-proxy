@@ -280,17 +280,24 @@ class ServicesTab(ttk.Frame):
         return view
 
     def _update_service_controls(self) -> None:
-        """Enable per-service buttons only for a selected, controllable row,
-        and label the frame with what's selected."""
+        """Enable each per-service button according to the selected row's status:
+        Start only when it's not running, Stop/Restart only when it is."""
         name = self._selected()
         status = self._tree.set(name, "status") if name else ""
         controllable = bool(name) and status in self._CONTROLLABLE
-        for btn in (self._start_btn, self._stop_btn, self._restart_btn):
-            btn.state(["!disabled"] if controllable else ["disabled"])
+        running = status == "running"
+
+        def enable(btn: ttk.Button, on: bool) -> None:
+            btn.state(["!disabled"] if on else ["disabled"])
+
+        enable(self._start_btn, controllable and not running)
+        enable(self._stop_btn, controllable and running)
+        enable(self._restart_btn, controllable and running)
+
         if not name:
             self._sel_frame.config(text="Selected service — click a row to control it")
         elif controllable:
-            self._sel_frame.config(text=f"Selected service: {name}")
+            self._sel_frame.config(text=f"Selected service: {name} ({status})")
         else:
             self._sel_frame.config(text=f"Selected service: {name} ({status} — not controllable)")
 
