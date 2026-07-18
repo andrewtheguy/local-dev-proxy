@@ -106,17 +106,18 @@ target_port_env = "OOPS_PORT"
 
 
 def test_resolve_routes_resolves_fixed_and_env_sockets(tmp_path: Path) -> None:
-    toml = """
+    fixed_socket = (Path(tmp_path.anchor) / "tmp" / "app-fixed.sock").as_posix()
+    toml = f"""
 http_port = 2800
 bind = ["127.0.0.1"]
 
 [services.sockets]
-env = {APP_SOCKET = "/tmp/app-env.sock"}
+env = {{APP_SOCKET = "/tmp/app-env.sock"}}
 
 [[services.sockets.routes]]
 id = "fixed"
 hosts = ["fixed.localhost"]
-target_socket = "/tmp/app-fixed.sock"
+target_socket = "{fixed_socket}"
 
 [[services.sockets.routes]]
 id = "env"
@@ -133,7 +134,7 @@ target_socket_env = "APP_SOCKET"
         socket_base_dir=tmp_path,
     )
     by_id = {route.id: route for route in routes}
-    assert by_id["fixed"].target_socket == "/tmp/app-fixed.sock"
+    assert by_id["fixed"].target_socket == fixed_socket
     assert by_id["fixed"].target_host is None
     assert by_id["fixed"].target_port is None
     assert by_id["env"].target_socket == str(tmp_path / "override.sock")

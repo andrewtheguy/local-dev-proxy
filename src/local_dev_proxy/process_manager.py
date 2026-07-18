@@ -21,6 +21,40 @@ from .routes import RoutesManifest, resolve_command
 logger = logging.getLogger(__name__)
 
 
+def _request_process_tree_stop(process: subprocess.Popen[bytes]) -> None:
+    if os.name == "nt":
+        try:
+            process.send_signal(signal.CTRL_BREAK_EVENT)
+        except OSError:
+            # GUI builds may not own a console, so a console control event cannot
+            # always be delivered. Fall back to terminating the complete tree.
+            _force_process_tree_stop(process)
+        return
+
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _force_process_tree_stop(process: subprocess.Popen[bytes]) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if process.poll() is None:
+            process.kill()
+        return
+
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
 @dataclass
 class ServiceInfo:
     name: str
@@ -187,7 +221,10 @@ class ServiceManager:
                 stderr=subprocess.STDOUT,
                 env=info.env,
                 cwd=self._cwd,
-                start_new_session=True,
+                start_new_session=os.name != "nt",
+                creationflags=(
+                    subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+                ),
             )
         except FileNotFoundError:
             log_writer.write(f"ERROR: Command not found: {info.command[0]}\n".encode())
@@ -253,18 +290,12 @@ class ServiceManager:
             info.process = None
             return
 
-        try:
-            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
+        _request_process_tree_stop(process)
 
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+            _force_process_tree_stop(process)
             process.wait(timeout=3)
 
         self._finish_log_capture(info)
