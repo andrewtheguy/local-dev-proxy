@@ -14,7 +14,7 @@ from collections.abc import Mapping
 import aiohttp
 from aiohttp import web
 
-from .config import require_port
+from .config import require_port, require_socket_path
 from .routes import RouteConfigError, RoutesManifest, load_routes
 
 logger = logging.getLogger(__name__)
@@ -37,16 +37,19 @@ def _configure_logging() -> None:
 class ResolvedRoute:
     id: str
     host_patterns: tuple[str, ...]
-    target_host: str
-    target_port: int
+    target_host: str | None = None
+    target_port: int | None = None
+    target_socket: str | None = None
 
 
 def resolve_routes(
     manifest: RoutesManifest,
     env: Mapping[str, str] | None = None,
+    socket_base_dir: Path | None = None,
 ) -> list[ResolvedRoute]:
     resolved: list[ResolvedRoute] = []
     seen_ports: dict[int, str] = {}
+    seen_sockets: dict[str, str] = {}
 
     for service in manifest.services.values():
         if service.disabled:
@@ -57,6 +60,33 @@ def resolve_routes(
             effective_env.update(env)
 
         for route in service.routes:
+            if route.target_socket is not None or route.target_socket_env is not None:
+                if route.target_socket is not None:
+                    socket_path = route.target_socket
+                else:
+                    assert route.target_socket_env is not None
+                    socket_path = require_socket_path(
+                        effective_env, route.target_socket_env
+                    )
+                if socket_base_dir is not None and not Path(socket_path).is_absolute():
+                    socket_path = str((socket_base_dir / socket_path).resolve())
+
+                if socket_path in seen_sockets:
+                    raise RouteConfigError(
+                        f"Socket {socket_path!r} used by both "
+                        f"{seen_sockets[socket_path]} and {route.id}"
+                    )
+                seen_sockets[socket_path] = route.id
+
+                resolved.append(
+                    ResolvedRoute(
+                        id=route.id,
+                        host_patterns=route.hosts,
+                        target_socket=socket_path,
+                    )
+                )
+                continue
+
             if route.target_port is not None:
                 port = route.target_port
             else:
@@ -99,7 +129,9 @@ class RouteTable:
 
     def reload(self, services_file: Path, env: Mapping[str, str] | None = None) -> None:
         manifest = load_routes(services_file)
-        routes = resolve_routes(manifest, env)
+        routes = resolve_routes(
+            manifest, env, socket_base_dir=services_file.resolve().parent
+        )
         portal = _build_portal_html(manifest, routes)
         with self._lock:
             self._routes = routes
@@ -218,10 +250,15 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         logger.info("%s %s %s -> 404", request.method, host, request.path)
         return web.Response(status=404, text="Not Found")
 
-    host_part = (
-        f"[{route.target_host}]" if ":" in route.target_host else route.target_host
-    )
-    target_base = f"http://{host_part}:{route.target_port}"
+    if route.target_socket is not None:
+        target_base = "http://localhost"
+    else:
+        assert route.target_host is not None
+        assert route.target_port is not None
+        host_part = (
+            f"[{route.target_host}]" if ":" in route.target_host else route.target_host
+        )
+        target_base = f"http://{host_part}:{route.target_port}"
     path = request.match_info.get("path_info", "")
     target_url = f"{target_base}/{path}"
     if request.query_string:
@@ -230,9 +267,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
     # WebSocket upgrade
     if _is_websocket_upgrade(request):
         logger.info("%s %s %s -> ws %s", request.method, host, request.path, route.id)
-        return await _proxy_websocket(request, target_url)
+        return await _proxy_websocket(request, target_url, route)
 
-    resp = await _proxy_http(request, target_url)
+    resp = await _proxy_http(request, target_url, route)
     logger.info(
         "%s %s %s -> %s %d", request.method, host, request.path, route.id, resp.status
     )
@@ -244,11 +281,22 @@ def _is_websocket_upgrade(request: web.Request) -> bool:
     return upgrade == "websocket"
 
 
-async def _proxy_http(request: web.Request, target_url: str) -> web.StreamResponse:
+def _client_session(route: ResolvedRoute) -> aiohttp.ClientSession:
+    connector = (
+        aiohttp.UnixConnector(path=route.target_socket)
+        if route.target_socket is not None
+        else None
+    )
+    return aiohttp.ClientSession(connector=connector)
+
+
+async def _proxy_http(
+    request: web.Request, target_url: str, route: ResolvedRoute
+) -> web.StreamResponse:
     headers = _filter_headers(request.headers)
     body = await request.read()
 
-    async with aiohttp.ClientSession() as session:
+    async with _client_session(route) as session:
         try:
             async with session.request(
                 request.method,
@@ -273,12 +321,14 @@ async def _proxy_http(request: web.Request, target_url: str) -> web.StreamRespon
             return web.Response(status=502, text="Bad Gateway")
 
 
-async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamResponse:
+async def _proxy_websocket(
+    request: web.Request, target_url: str, route: ResolvedRoute
+) -> web.StreamResponse:
     ws_target = target_url.replace("http://", "ws://", 1).replace(
         "https://", "wss://", 1
     )
     try:
-        async with aiohttp.ClientSession() as session:
+        async with _client_session(route) as session:
             ws_headers = _filter_websocket_headers(request.headers)
             ws_protocols = _get_websocket_protocols(request)
             async with session.ws_connect(

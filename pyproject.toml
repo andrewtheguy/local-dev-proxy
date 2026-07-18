@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "local-dev-proxy"
-version = "0.0.3"
+version = "0.0.4"
 description = "Local development process orchestration with a built-in reverse proxy and manager UI"
 authors = [{ name = "Andrew Chen", email = "hello@andrewtheguy.com" }]
 readme = "README.md"

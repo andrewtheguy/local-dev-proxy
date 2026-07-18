@@ -9,7 +9,15 @@ from collections.abc import Mapping
 _TOP_LEVEL_KEYS = frozenset({"http_port", "bind", "services"})
 _SERVICE_KEYS = frozenset({"command", "env", "routes", "disabled"})
 _ROUTE_KEYS = frozenset(
-    {"id", "hosts", "target_host", "target_port", "target_port_env"}
+    {
+        "id",
+        "hosts",
+        "target_host",
+        "target_port",
+        "target_port_env",
+        "target_socket",
+        "target_socket_env",
+    }
 )
 _ALLOWED_TARGET_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
@@ -22,9 +30,11 @@ class RouteConfigError(ValueError):
 class ServiceRoute:
     id: str
     hosts: tuple[str, ...]
-    target_host: str
+    target_host: str | None = None
     target_port: int | None = None
     target_port_env: str | None = None
+    target_socket: str | None = None
+    target_socket_env: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,35 +130,63 @@ def _build_manifest(data: dict[str, object]) -> RoutesManifest:
 
             raw_port = route_raw.get("target_port")
             raw_port_env = route_raw.get("target_port_env")
+            raw_socket = route_raw.get("target_socket")
+            raw_socket_env = route_raw.get("target_socket_env")
 
-            if raw_port is not None and raw_port_env is not None:
+            target_fields = {
+                "target_port": raw_port,
+                "target_port_env": raw_port_env,
+                "target_socket": raw_socket,
+                "target_socket_env": raw_socket_env,
+            }
+            selected_targets = [
+                name for name, value in target_fields.items() if value is not None
+            ]
+            if len(selected_targets) != 1:
                 raise RouteConfigError(
-                    f"{route_prefix}: set target_port or target_port_env, not both"
-                )
-            if raw_port is None and raw_port_env is None:
-                raise RouteConfigError(
-                    f"{route_prefix}: requires target_port or target_port_env"
+                    f"{route_prefix}: set exactly one of target_port, "
+                    "target_port_env, target_socket, or target_socket_env"
                 )
 
             target_port: int | None = None
             target_port_env: str | None = None
-            if raw_port is not None:
+            target_socket: str | None = None
+            target_socket_env: str | None = None
+            target_host: str | None = None
+            if selected_targets[0] == "target_port":
                 target_port = _parse_int(raw_port, f"{route_prefix}.target_port")
-            else:
+            elif selected_targets[0] == "target_port_env":
                 if not isinstance(raw_port_env, str) or not raw_port_env:
                     raise RouteConfigError(
                         f"{route_prefix}.target_port_env must be a non-empty string"
                     )
                 target_port_env = raw_port_env
+            elif selected_targets[0] == "target_socket":
+                if not isinstance(raw_socket, str) or not raw_socket:
+                    raise RouteConfigError(
+                        f"{route_prefix}.target_socket must be a non-empty string"
+                    )
+                target_socket = raw_socket
+            else:
+                if not isinstance(raw_socket_env, str) or not raw_socket_env:
+                    raise RouteConfigError(
+                        f"{route_prefix}.target_socket_env must be a non-empty string"
+                    )
+                target_socket_env = raw_socket_env
 
-            target_host = route_raw.get("target_host", "localhost")
-            if (
-                not isinstance(target_host, str)
-                or target_host not in _ALLOWED_TARGET_HOSTS
-            ):
+            if target_port is not None or target_port_env is not None:
+                target_host = route_raw.get("target_host", "localhost")
+                if (
+                    not isinstance(target_host, str)
+                    or target_host not in _ALLOWED_TARGET_HOSTS
+                ):
+                    raise RouteConfigError(
+                        f"{route_prefix}.target_host must be one of "
+                        f"{sorted(_ALLOWED_TARGET_HOSTS)}, got: {target_host!r}"
+                    )
+            elif "target_host" in route_raw:
                 raise RouteConfigError(
-                    f"{route_prefix}.target_host must be one of "
-                    f"{sorted(_ALLOWED_TARGET_HOSTS)}, got: {target_host!r}"
+                    f"{route_prefix}.target_host cannot be used with a Unix socket"
                 )
 
             routes.append(
@@ -158,6 +196,8 @@ def _build_manifest(data: dict[str, object]) -> RoutesManifest:
                     target_host=target_host,
                     target_port=target_port,
                     target_port_env=target_port_env,
+                    target_socket=target_socket,
+                    target_socket_env=target_socket_env,
                 )
             )
 
