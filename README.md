@@ -47,10 +47,10 @@ uv tool install git+https://github.com/andrewtheguy/local-dev-proxy.git@(tag or 
 
 ### Run without installing
 ```shell
-uv tool run --from git+https://github.com/andrewtheguy/local-dev-proxy.git@vx.x.x local-dev-proxy [command] [options]
+uv tool run --from git+https://github.com/andrewtheguy/local-dev-proxy.git@vx.x.x local-dev-proxy
 
 # Or from a local checkout
-uv run local-dev-proxy [command] [options]
+uv run local-dev-proxy
 ```
 
 ## What you get
@@ -76,16 +76,24 @@ uv run local-dev-proxy [command] [options]
 
 ## Configuration
 
-Configuration lives in a per-user file:
+Configuration lives in Qt's platform-standard per-user application configuration
+directory:
 
-```
-~/.config/local-dev-proxy/services.toml
-```
+| Platform | Default directory |
+|----------|-------------------|
+| macOS | `~/Library/Preferences/andrewtheguy/local-dev-proxy/` |
+| Windows | `%APPDATA%\andrewtheguy\local-dev-proxy\` |
+| Linux | `$XDG_CONFIG_HOME/andrewtheguy/local-dev-proxy/` (or `~/.config/...`) |
 
-(honors `$XDG_CONFIG_HOME`). On first run it is created automatically from the bundled
-sample. It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and
-routes. Route targets can be TCP ports or Unix domain sockets. Logs are written next to
-it under `~/.config/local-dev-proxy/logs/`.
+On first run, `services.toml` is created there automatically from the bundled sample.
+It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and routes.
+Route targets can be TCP ports or Unix domain sockets. Logs are written in the `logs/`
+directory beside it.
+
+For an isolated development or test profile, set
+`LOCAL_DEV_PROXY_CONFIG_DIR=/path/to/profile`. The selected profile controls the
+configuration, logs, cached icons, single-instance lock, and application activation
+channel, so it does not touch or contend with the normal profile.
 `http_port` and `bind` are required, values are type-checked without coercion, and
 unknown keys are rejected rather than silently treated as an older config shape.
 
@@ -105,14 +113,18 @@ uv sync
 uv run local-dev-proxy
 ```
 
-`uv run local-dev-proxy` **starts the app detached** (it returns your terminal
-immediately) and opens the **manager window**. It is a single process: the manager
-window owns the in-process reverse proxy and the service processes and calls them
-directly — there is no background admin port or application-control IPC. A system-tray
-icon appears (in the macOS menu bar / Windows notification area / Linux tray); its menu
-has **Open Manager** and **Quit**. Running the command again reports that it is already
-running; use **Open Manager** from the tray to restore a hidden window. An advisory OS
-file lock prevents multiple app instances; it is not used as a command or data channel.
+`local-dev-proxy` is installed as a GUI entry point and runs the Qt application directly
+in that process. There is no CLI layer, foreground flag, self-spawn, or launcher process.
+When invoked from a terminal on macOS or Linux, the command remains attached until the
+application quits; the GUI entry point prevents a console window on Windows.
+
+The manager window owns the in-process reverse proxy and the managed service processes
+and calls them directly — there is no background admin port. A system-tray icon appears
+in the macOS menu bar, Windows notification area, or Linux tray, with **Open Manager**
+and **Quit** actions. Launching the application again sends a local Qt activation request
+to the existing instance, which restores and raises its manager window instead of
+starting another copy. The activation endpoint and instance lock are scoped to the
+selected configuration profile.
 
 ### Manager window
 
@@ -132,12 +144,12 @@ A window with three tabs:
 ### Lifecycle
 
 - **Close the window** → it hides to the system-tray icon; the proxy and services
-  keep running. Choose **Open Manager** from the tray menu to reopen it.
+  keep running. Opening the tray menu does not also restore the window; choose
+  **Open Manager** (or double-click the icon where supported) to reopen it.
 - **Quit** (the in-window *Quit* button or the tray menu's *Quit*) → stops the
   proxy, stops all managed services, and exits the app.
-
-`uv run local-dev-proxy --foreground` runs the app in the foreground (blocking) instead of
-detaching — this is what the detached launcher and a packaged build use internally.
+- **No system tray available** → closing the manager window quits cleanly so the
+  application cannot become invisible and unreachable.
 
 ## How to add a service
 
@@ -209,6 +221,7 @@ The bundled defaults live in `src/local_dev_proxy/services.toml.sample`.
 
 - **Service URL not proxying:** open the manager window's **Services** tab to check the
   service state, and confirm the port or Unix socket path is set in `services.toml`.
-- **Proxy not responding:** check `~/.config/local-dev-proxy/logs/manager.log` for
-  startup errors. Quit from the window (or the tray menu), then run `uv run local-dev-proxy` again.
+- **Proxy not responding:** check `logs/manager.log` inside the platform configuration
+  directory for startup errors. Quit from the window (or the tray menu), then run
+  `uv run local-dev-proxy` again.
 - **View service logs:** use the **Logs** tab (with *Follow* for a live tail).

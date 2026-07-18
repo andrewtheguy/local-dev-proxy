@@ -7,13 +7,18 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QPalette, QTextDocument
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPalette, QTextDocument
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QPlainTextEdit
+from PySide6.QtWidgets import QApplication, QPlainTextEdit, QSystemTrayIcon
 
 from local_dev_proxy import config as config_module
 from local_dev_proxy.config import ProjectPaths
-from local_dev_proxy.gui import ManagerController, _tail_file, _TomlSyntaxHighlighter
+from local_dev_proxy.gui import (
+    ManagerController,
+    ManagerWindow,
+    _tail_file,
+    _TomlSyntaxHighlighter,
+)
 from local_dev_proxy.routes import load_routes
 
 
@@ -218,6 +223,17 @@ def test_toml_syntax_highlighting(qtbot: object) -> None:
     assert _highlight_color_at(document, 7, 8) == QColor("#667085")
 
 
+def test_window_closes_normally_when_no_tray_is_available(qtbot: object) -> None:
+    window = ManagerWindow(QIcon())
+    qtbot.addWidget(window)
+    window.set_hide_on_close(False)
+    window.show()
+
+    window.close()
+
+    assert not window.isVisible()
+
+
 def test_macos_tray_icon_is_white_with_identical_alpha_mask() -> None:
     original = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"))
     macos = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon-macos.png"))
@@ -282,7 +298,6 @@ def test_all_manager_flows_with_screenshots(
 
     controller = ManagerController(
         paths,
-        lock=None,
         application=QApplication.instance(),
         service_factory=service_factory,
         proxy_factory=proxy_factory,
@@ -492,6 +507,13 @@ def test_all_manager_flows_with_screenshots(
     window.close()
     qtbot.waitUntil(lambda: not window.isVisible(), timeout=2000)
     assert not controller._quitting
+
+    # A normal tray click only opens the platform menu. It must not also restore
+    # the manager window (macOS emits Trigger while displaying the menu).
+    controller._tray_activated(QSystemTrayIcon.ActivationReason.Trigger)
+    qtbot.wait(30)
+    assert not window.isVisible()
+
     controller.open_action.trigger()
     qtbot.waitUntil(window.isVisible, timeout=2000)
     screenshot("14-restored-from-tray")
@@ -521,7 +543,6 @@ def test_tray_quit_action_uses_full_cleanup(
 
     controller = ManagerController(
         paths,
-        lock=None,
         application=QApplication.instance(),
         service_factory=FakeServiceManager,
         proxy_factory=proxy_factory,

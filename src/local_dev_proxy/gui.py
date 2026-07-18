@@ -76,6 +76,7 @@ from .config import (
     AlreadyRunningError,
     ProjectPaths,
     acquire_instance_lock,
+    configure_application_identity,
     dock_icon_path,
     ensure_config,
     icon_path,
@@ -90,6 +91,7 @@ from .routes import (
     validate_toml,
 )
 from .services import start_proxy, start_services_managed
+from .single_instance import ActivationServer, activate_running_instance
 
 logger = logging.getLogger(__name__)
 
@@ -141,15 +143,6 @@ class ProxyLike(Protocol):
 ServiceFactory = Callable[[ProjectPaths], ServiceManagerLike]
 ProxyFactory = Callable[[ProjectPaths], ProxyLike]
 UrlOpener = Callable[[str], object]
-
-
-def _acquire_lock() -> FileLock:
-    """Take the single-instance lock; exit if another manager holds it."""
-    try:
-        return acquire_instance_lock()
-    except AlreadyRunningError as exc:
-        logger.error("%s", exc)
-        raise SystemExit(1) from exc
 
 
 def _tail_file(path: Path, lines: int) -> str:
@@ -429,6 +422,7 @@ class ManagerWindow(QMainWindow):
     def __init__(self, app_icon: QIcon) -> None:
         super().__init__()
         self._allow_close = False
+        self._hide_on_close = True
         self.setObjectName("manager_window")
         self.setWindowTitle(f"Local Dev Proxy — Manager v{__version__}")
         self.setWindowIcon(app_icon)
@@ -768,8 +762,11 @@ class ManagerWindow(QMainWindow):
     def allow_close(self) -> None:
         self._allow_close = True
 
+    def set_hide_on_close(self, enabled: bool) -> None:
+        self._hide_on_close = enabled
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
-        if self._allow_close:
+        if self._allow_close or not self._hide_on_close:
             event.accept()
             return
         event.ignore()
@@ -782,7 +779,6 @@ class ManagerController:
     def __init__(
         self,
         paths: ProjectPaths,
-        lock: FileLock | None,
         *,
         application: QApplication | None = None,
         service_factory: ServiceFactory = start_services_managed,
@@ -794,7 +790,6 @@ class ManagerController:
             raise RuntimeError("Create QApplication before ManagerController")
         self.application = app
         self.paths = paths
-        self._lock = lock
         self._service_factory = service_factory
         self._proxy_factory = proxy_factory
         self._url_opener = url_opener
@@ -812,8 +807,8 @@ class ManagerController:
         self._loaded_config = ""
         self._shutdown_flag = threading.Event()
 
-        self.window = ManagerWindow(_icon(dock_icon_path()))
-        self.tray = QSystemTrayIcon(_icon(icon_path()), self.window)
+        self.window = ManagerWindow(_icon(dock_icon_path(paths.config_dir)))
+        self.tray = QSystemTrayIcon(_icon(icon_path(paths.config_dir)), self.window)
         self.tray.setObjectName("system_tray")
         self.tray.setToolTip("Local Dev Proxy")
         self.tray_menu = QMenu()
@@ -859,7 +854,7 @@ class ManagerController:
         window.refresh_logs_button.clicked.connect(self._refresh_logs)
         window.reload_routes_button.clicked.connect(self._reload_routes)
         window.route_tree.clicked.connect(self._open_route_index)
-        self.open_action.triggered.connect(self._show_window)
+        self.open_action.triggered.connect(self.show_window)
         self.quit_action.triggered.connect(self.quit)
         self.tray.activated.connect(self._tray_activated)
 
@@ -921,13 +916,14 @@ class ManagerController:
             self.quit()
 
     def _tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason in {
-            QSystemTrayIcon.ActivationReason.Trigger,
-            QSystemTrayIcon.ActivationReason.DoubleClick,
-        }:
-            self._show_window()
+        # A normal click is reserved for the platform tray menu. In particular,
+        # macOS emits Trigger while showing an assigned context menu; restoring
+        # here would open the menu and window at the same time.
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.show_window()
 
-    def _show_window(self) -> None:
+    def show_window(self) -> None:
+        """Restore and activate the manager window."""
         self.window.show_and_raise()
 
     def quit(self) -> None:
@@ -938,9 +934,6 @@ class ManagerController:
         self._signal_timer.stop()
         self.stop_services()
         self.tray.hide()
-        if self._lock is not None:
-            release_instance_lock(self._lock)
-            self._lock = None
         atexit.unregister(self._atexit_callback)
         self.window.allow_close()
         self.window.close()
@@ -1313,42 +1306,80 @@ class ManagerController:
             self._url_opener(url)
 
 
-def _run_gui(paths: ProjectPaths) -> None:
-    lock = _acquire_lock()
+def _run_gui(
+    paths: ProjectPaths,
+    app: QApplication,
+    lock: FileLock,
+    activation_server: ActivationServer,
+    *,
+    execute_event_loop: bool,
+) -> int:
+    controller: ManagerController | None = None
+    try:
+        controller = ManagerController(paths, application=app)
+        activation_server.activated.connect(controller.show_window)
+        try:
+            controller.start_services()
+        except Exception as exc:  # noqa: BLE001 - bad config opens in editor mode
+            logger.error("Startup failed; services left stopped: %s", exc)
+
+        controller.prime()
+        tray_available = QSystemTrayIcon.isSystemTrayAvailable()
+        controller.window.set_hide_on_close(tray_available)
+        app.setQuitOnLastWindowClosed(not tray_available)
+        controller.window.show()
+        if tray_available:
+            controller.tray.show()
+        controller.install_signals()
+        controller.start_timers()
+
+        return app.exec() if execute_event_loop else 0
+    finally:
+        activation_server.close()
+        try:
+            if controller is not None:
+                controller.quit()
+        finally:
+            release_instance_lock(lock)
+
+
+def run_gui(paths: ProjectPaths | None = None) -> int:
+    """Run the Qt desktop application directly in the current process."""
+    configure_application_identity()
     app = QApplication.instance()
     owns_application = app is None
     if app is None:
         app = QApplication(sys.argv)
-    assert isinstance(app, QApplication)
-    app.setApplicationName("Local Dev Proxy")
-    app.setOrganizationName("local-dev-proxy")
-    app.setQuitOnLastWindowClosed(False)
+    if not isinstance(app, QApplication):
+        raise RuntimeError("A non-widget QCoreApplication already exists")
 
-    controller = ManagerController(paths, lock, application=app)
-    try:
-        controller.start_services()
-    except Exception as exc:  # noqa: BLE001 - bad config opens in editor mode
-        logger.error("Startup failed; services left stopped: %s", exc)
+    app.setApplicationDisplayName("Local Dev Proxy")
+    app.setApplicationVersion(__version__)
 
-    controller.prime()
-    controller.window.show()
-    if QSystemTrayIcon.isSystemTrayAvailable():
-        controller.tray.show()
-    controller.install_signals()
-    controller.start_timers()
+    resolved = ensure_config(paths)
+    app.setWindowIcon(_icon(dock_icon_path(resolved.config_dir)))
 
     try:
-        if owns_application:
-            app.exec()
-    finally:
-        controller.quit()
+        lock = acquire_instance_lock(resolved)
+    except AlreadyRunningError:
+        activate_running_instance(resolved)
+        return 0
 
-
-def run_gui() -> None:
-    paths = ensure_config()
-    handler = _configure_manager_logging(paths.logs_dir / "manager.log")
+    handler = _configure_manager_logging(resolved.logs_dir / "manager.log")
     try:
-        _run_gui(paths)
+        try:
+            activation_server = ActivationServer(resolved, app)
+        except Exception:
+            release_instance_lock(lock)
+            logger.exception("Could not initialize the application activation channel")
+            return 1
+        return _run_gui(
+            resolved,
+            app,
+            lock,
+            activation_server,
+            execute_event_loop=owns_application,
+        )
     finally:
         package_logger = logging.getLogger("local_dev_proxy")
         package_logger.removeHandler(handler)

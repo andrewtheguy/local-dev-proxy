@@ -1,39 +1,53 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
 import os
 import shutil
 import sys
-import tempfile
 from collections.abc import Mapping
 
 from filelock import FileLock, Timeout
+from PySide6.QtCore import QCoreApplication, QStandardPaths
 
 _APP_NAME = "local-dev-proxy"
+_ORGANIZATION_NAME = "andrewtheguy"
+_ORGANIZATION_DOMAIN = "andrewtheguy.com"
 _SAMPLE_RESOURCE = "services.toml.sample"
 _ICON_RESOURCE = "assets/tray-icon.png"
 _MACOS_ICON_RESOURCE = "assets/tray-icon-macos.png"
 _DOCK_ICON_RESOURCE = "assets/dock-icon.png"
 
-# Single-instance guard for the running manager (proxy + service manager). The
-# advisory OS lock carries no commands or application data and is released
-# automatically when its holder dies, so it never goes stale.
-LOCK_PATH = os.path.join(tempfile.gettempdir(), "local-dev-proxy.lock")
+
+@dataclass(frozen=True)
+class ProjectPaths:
+    config_dir: Path
+    services_file: Path
+    logs_dir: Path
 
 
 class AlreadyRunningError(RuntimeError):
     """Raised when the single-instance lock is already held by another manager."""
 
 
-def acquire_instance_lock() -> FileLock:
+def profile_key(paths: ProjectPaths) -> str:
+    """Return a stable identity for one independently runnable config file."""
+    config_identity = os.path.normcase(str(paths.services_file.resolve()))
+    return hashlib.sha256(os.fsencode(config_identity)).hexdigest()[:20]
+
+
+def acquire_instance_lock(paths: ProjectPaths) -> FileLock:
     """Take and return the single-instance lock for the manager's lifetime.
+
+    The lock is scoped to the selected configuration directory, so isolated
+    development/test profiles do not contend with the normal application.
 
     Raises :class:`AlreadyRunningError` if another manager already holds it.
     """
-    lock = FileLock(LOCK_PATH)
+    lock = FileLock(paths.config_dir / f".instance-{profile_key(paths)}.lock")
     try:
         lock.acquire(timeout=0)
     except Timeout as exc:
@@ -46,38 +60,41 @@ def release_instance_lock(lock: FileLock) -> None:
     lock.release()
 
 
-def manager_running() -> bool:
-    """Return whether another manager holds the single-instance guard."""
-    lock = FileLock(LOCK_PATH)
-    try:
-        lock.acquire(timeout=0)
-    except Timeout:
-        return True
-    else:
-        lock.release()
-        return False
-
-
-@dataclass(frozen=True)
-class ProjectPaths:
-    config_dir: Path
-    services_file: Path
-    logs_dir: Path
+def configure_application_identity() -> None:
+    """Set stable Qt application metadata used by platform integrations."""
+    QCoreApplication.setApplicationName(_APP_NAME)
+    QCoreApplication.setOrganizationName(_ORGANIZATION_NAME)
+    QCoreApplication.setOrganizationDomain(_ORGANIZATION_DOMAIN)
 
 
 def user_config_dir() -> Path:
-    """Return the per-user config directory for local-dev-proxy.
+    """Return the platform-standard per-user application config directory.
 
-    Honors ``LOCAL_DEV_PROXY_CONFIG_DIR`` (mainly for tests/dev), then
-    ``$XDG_CONFIG_HOME``, falling back to ``~/.config``.
+    ``LOCAL_DEV_PROXY_CONFIG_DIR`` is an explicit development/test override.
+    Normal launches use Qt's ``AppConfigLocation``, which follows the native
+    convention on macOS, Windows, and Linux (including XDG on Linux).
     """
     override = os.environ.get("LOCAL_DEV_PROXY_CONFIG_DIR")
     if override:
         return Path(override).expanduser().resolve()
 
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
-    return (base / _APP_NAME).resolve()
+    configure_application_identity()
+    location = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppConfigLocation
+    )
+    if not location:
+        raise RuntimeError("The operating system did not provide a config directory")
+    return Path(location).expanduser().resolve()
+
+
+def get_paths(config_dir: Path | None = None) -> ProjectPaths:
+    """Resolve all runtime paths, optionally for an isolated config profile."""
+    root = (config_dir or user_config_dir()).expanduser().resolve()
+    return ProjectPaths(
+        config_dir=root,
+        services_file=root / "services.toml",
+        logs_dir=root / "logs",
+    )
 
 
 def bundled_resource(name: str) -> Traversable:
@@ -88,17 +105,13 @@ def bundled_resource(name: str) -> Traversable:
     return resource
 
 
-def ensure_config() -> ProjectPaths:
+def ensure_config(paths: ProjectPaths | None = None) -> ProjectPaths:
     """Create the config/log dirs and seed services.toml from the sample.
 
-    Idempotent: safe to call at every entrypoint.
+    Passing paths makes startup and tests independent of the user's real
+    platform config directory. The operation is idempotent.
     """
-    root = user_config_dir()
-    resolved = ProjectPaths(
-        config_dir=root,
-        services_file=root / "services.toml",
-        logs_dir=root / "logs",
-    )
+    resolved = paths or get_paths()
     resolved.config_dir.mkdir(parents=True, exist_ok=True)
     resolved.logs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -110,7 +123,11 @@ def ensure_config() -> ProjectPaths:
     return resolved
 
 
-def _cached_icon(resource_name: str, cache_name: str) -> Path | None:
+def _cached_icon(
+    resource_name: str,
+    cache_name: str,
+    config_dir: Path | None = None,
+) -> Path | None:
     """Copy a bundled icon into the config dir and return its path, or None.
 
     Using the config dir as a stable cache means the icon works even when the
@@ -120,7 +137,7 @@ def _cached_icon(resource_name: str, cache_name: str) -> Path | None:
     if not resource.is_file():
         return None
 
-    cache = user_config_dir() / cache_name
+    cache = (config_dir or user_config_dir()) / cache_name
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
         with resources.as_file(resource) as src:
@@ -130,16 +147,20 @@ def _cached_icon(resource_name: str, cache_name: str) -> Path | None:
     return cache
 
 
-def icon_path() -> Path | None:
+def icon_path(config_dir: Path | None = None) -> Path | None:
     """Return a filesystem path to the bundled system-tray icon, or None."""
     if sys.platform == "darwin":
-        return _cached_icon(_MACOS_ICON_RESOURCE, "tray-icon-macos.png")
-    return _cached_icon(_ICON_RESOURCE, "tray-icon.png")
+        return _cached_icon(
+            _MACOS_ICON_RESOURCE,
+            "tray-icon-macos.png",
+            config_dir,
+        )
+    return _cached_icon(_ICON_RESOURCE, "tray-icon.png", config_dir)
 
 
-def dock_icon_path() -> Path | None:
+def dock_icon_path(config_dir: Path | None = None) -> Path | None:
     """Return a filesystem path to the bundled Dock icon, or None."""
-    return _cached_icon(_DOCK_ICON_RESOURCE, "dock-icon.png")
+    return _cached_icon(_DOCK_ICON_RESOURCE, "dock-icon.png", config_dir)
 
 
 def require_port(env: Mapping[str, str], key: str) -> int:
