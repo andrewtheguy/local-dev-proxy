@@ -237,6 +237,19 @@ def test_window_closes_normally_when_no_tray_is_available(qtbot: object) -> None
     assert not window.isVisible()
 
 
+def test_dock_icon_follows_window_visibility(qtbot: object) -> None:
+    calls: list[bool] = []
+    window = ManagerWindow(QIcon(), dock_setter=calls.append)
+    qtbot.addWidget(window)
+
+    window.show()
+    window.hide()
+
+    # Dock icon shown while visible, hidden once tucked away to the tray.
+    assert calls[0] is True
+    assert calls[-1] is False
+
+
 def test_missing_config_opens_an_empty_new_configuration_editor(
     qtbot: object,
     tmp_path: Path,

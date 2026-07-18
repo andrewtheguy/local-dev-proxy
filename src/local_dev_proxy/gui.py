@@ -40,8 +40,10 @@ from PySide6.QtGui import (
     QCloseEvent,
     QColor,
     QFont,
+    QHideEvent,
     QIcon,
     QKeySequence,
+    QShowEvent,
     QStandardItem,
     QStandardItemModel,
     QSyntaxHighlighter,
@@ -90,6 +92,7 @@ from .routes import (
     load_routes,
     validate_toml,
 )
+from .macos_dock import set_dock_icon_visible
 from .services import start_proxy, start_services_managed
 from .shell_env import restore_login_shell_path
 from .single_instance import ActivationServer, activate_running_instance
@@ -420,10 +423,17 @@ class ManagerWindow(QMainWindow):
     route_tree: QTreeView
     reload_routes_button: QPushButton
 
-    def __init__(self, app_icon: QIcon) -> None:
+    def __init__(
+        self,
+        app_icon: QIcon,
+        dock_setter: Callable[[bool], object] = set_dock_icon_visible,
+    ) -> None:
         super().__init__()
         self._allow_close = False
         self._hide_on_close = True
+        # Show the macOS Dock icon only while the window is visible; the app
+        # otherwise lives in the menu bar (see macos_dock). No-op off macOS.
+        self._dock_setter = dock_setter
         self.setObjectName("manager_window")
         self.setWindowTitle(f"Local Dev Proxy — Manager v{__version__}")
         self.setWindowIcon(app_icon)
@@ -772,6 +782,14 @@ class ManagerWindow(QMainWindow):
             return
         event.ignore()
         self.hide()
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt API
+        super().showEvent(event)
+        self._dock_setter(True)
+
+    def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802 - Qt API
+        super().hideEvent(event)
+        self._dock_setter(False)
 
 
 class ManagerController:
