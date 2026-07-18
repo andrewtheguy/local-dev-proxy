@@ -216,5 +216,80 @@ target_port_env = "BAD_PORT"
     path = tmp_path / "services.toml"
     path.write_text(toml)
 
-    with pytest.raises(RouteConfigError, match="not both"):
+    with pytest.raises(RouteConfigError, match="set exactly one"):
+        load_routes(path)
+
+
+def test_target_socket_fixed_and_env_parse(tmp_path: Path) -> None:
+    toml = """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.socket]
+command = ["socket-server"]
+env = {APP_SOCKET = "/tmp/app-env.sock"}
+
+[[services.socket.routes]]
+id = "fixed-socket"
+hosts = ["fixed.localhost"]
+target_socket = "/tmp/app.sock"
+
+[[services.socket.routes]]
+id = "env-socket"
+hosts = ["env.localhost"]
+target_socket_env = "APP_SOCKET"
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+
+    routes = load_routes(path).services["socket"].routes
+    assert routes[0].target_socket == "/tmp/app.sock"
+    assert routes[0].target_socket_env is None
+    assert routes[0].target_host is None
+    assert routes[1].target_socket is None
+    assert routes[1].target_socket_env == "APP_SOCKET"
+    assert routes[1].target_host is None
+
+
+def test_target_requires_exactly_one_port_or_socket(tmp_path: Path) -> None:
+    path = tmp_path / "services.toml"
+    path.write_text(
+        """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.bad]
+command = ["bad"]
+
+[[services.bad.routes]]
+id = "bad"
+hosts = ["bad.localhost"]
+target_port = 3000
+target_socket = "/tmp/bad.sock"
+"""
+    )
+
+    with pytest.raises(RouteConfigError, match="set exactly one"):
+        load_routes(path)
+
+
+def test_target_socket_rejects_target_host(tmp_path: Path) -> None:
+    path = tmp_path / "services.toml"
+    path.write_text(
+        """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.bad]
+command = ["bad"]
+
+[[services.bad.routes]]
+id = "bad"
+hosts = ["bad.localhost"]
+target_host = "127.0.0.1"
+target_socket = "/tmp/bad.sock"
+"""
+    )
+
+    with pytest.raises(RouteConfigError, match="cannot be used with a Unix socket"):
         load_routes(path)

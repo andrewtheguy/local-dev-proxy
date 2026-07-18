@@ -156,3 +156,12 @@ def require_port(env: Mapping[str, str], key: str) -> int:
         raise ValueError(f"{key} must be in range 1-65535, got: {value}")
 
     return value
+
+
+def require_socket_path(env: Mapping[str, str], key: str) -> str:
+    raw = env.get(key)
+    if raw is None:
+        raise ValueError(f"Missing required socket variable: {key}")
+    if not raw:
+        raise ValueError(f"{key} must be a non-empty socket path")
+    return raw

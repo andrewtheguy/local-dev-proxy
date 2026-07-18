@@ -382,6 +382,10 @@ def test_all_manager_flows_with_screenshots(
     assert window.route_model.rowCount() == 4
     s3browser_parent = window.route_model.index(1, 0)
     assert window.route_model.rowCount(s3browser_parent) == 1
+    assert (
+        window.route_model.index(0, 2, s3browser_parent).data()
+        == "unix:s3browser.sock"
+    )
     url_index = _find_first_url(window.route_model)
     assert url_index.isValid()
     window.route_tree.scrollTo(url_index)

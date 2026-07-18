@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
+import socket
+import tempfile
+import uuid
 
 import aiohttp
 import pytest
@@ -99,6 +102,85 @@ target_port_env = "OOPS_PORT"
     manifest = load_routes(path)
 
     with pytest.raises(ValueError, match="OOPS_PORT"):
+        resolve_routes(manifest)
+
+
+def test_resolve_routes_resolves_fixed_and_env_sockets(tmp_path: Path) -> None:
+    toml = """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.sockets]
+env = {APP_SOCKET = "/tmp/app-env.sock"}
+
+[[services.sockets.routes]]
+id = "fixed"
+hosts = ["fixed.localhost"]
+target_socket = "/tmp/app-fixed.sock"
+
+[[services.sockets.routes]]
+id = "env"
+hosts = ["env.localhost"]
+target_socket_env = "APP_SOCKET"
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+    manifest = load_routes(path)
+
+    routes = resolve_routes(
+        manifest,
+        env={"APP_SOCKET": "override.sock"},
+        socket_base_dir=tmp_path,
+    )
+    by_id = {route.id: route for route in routes}
+    assert by_id["fixed"].target_socket == "/tmp/app-fixed.sock"
+    assert by_id["fixed"].target_host is None
+    assert by_id["fixed"].target_port is None
+    assert by_id["env"].target_socket == str(tmp_path / "override.sock")
+
+
+def test_resolve_routes_rejects_duplicate_socket(tmp_path: Path) -> None:
+    toml = """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.sockets]
+
+[[services.sockets.routes]]
+id = "one"
+hosts = ["one.localhost"]
+target_socket = "/tmp/shared.sock"
+
+[[services.sockets.routes]]
+id = "two"
+hosts = ["two.localhost"]
+target_socket = "/tmp/shared.sock"
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+    manifest = load_routes(path)
+
+    with pytest.raises(RouteConfigError, match="Socket '/tmp/shared.sock'"):
+        resolve_routes(manifest)
+
+
+def test_resolve_routes_requires_socket_env(tmp_path: Path) -> None:
+    toml = """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.socket]
+
+[[services.socket.routes]]
+id = "socket"
+hosts = ["socket.localhost"]
+target_socket_env = "APP_SOCKET"
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+    manifest = load_routes(path)
+
+    with pytest.raises(ValueError, match="APP_SOCKET"):
         resolve_routes(manifest)
 
 
@@ -254,6 +336,42 @@ async def test_proxy_forwards_http(aiohttp_client: type) -> None:
         await upstream_server.close()
 
 
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="Unix sockets unavailable")
+async def test_proxy_forwards_http_over_unix_socket(aiohttp_client: type) -> None:
+    upstream_app = _make_upstream_app()
+    runner = web.AppRunner(upstream_app)
+    await runner.setup()
+    socket_path = (
+        Path(tempfile.gettempdir()) / f"local-dev-proxy-{uuid.uuid4().hex}.sock"
+    )
+    site = web.UnixSite(runner, str(socket_path))
+    await site.start()
+
+    rt = RouteTable()
+    rt._routes = [
+        ResolvedRoute(
+            id="socket-service",
+            host_patterns=("socket.localhost",),
+            target_socket=str(socket_path),
+        ),
+    ]
+    rt._portal_html = ""
+
+    proxy_app = make_proxy_app(rt)
+    client = await aiohttp_client(proxy_app)
+    try:
+        resp = await client.get(
+            "/some/path", headers={"Host": "socket.localhost"}
+        )
+        assert resp.status == 200
+        text = await resp.text()
+        assert "method=GET" in text
+        assert "path=/some/path" in text
+    finally:
+        await runner.cleanup()
+        socket_path.unlink(missing_ok=True)
+
+
 async def test_proxy_forwards_post_body(aiohttp_client: type) -> None:
     upstream_app = _make_upstream_app()
     upstream_server = TestServer(upstream_app)
@@ -330,6 +448,42 @@ async def test_proxy_websocket(aiohttp_client: type) -> None:
             await ws.close()
     finally:
         await upstream_server.close()
+
+
+@pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="Unix sockets unavailable")
+async def test_proxy_websocket_over_unix_socket(aiohttp_client: type) -> None:
+    upstream_app = _make_upstream_app()
+    runner = web.AppRunner(upstream_app)
+    await runner.setup()
+    socket_path = (
+        Path(tempfile.gettempdir()) / f"local-dev-proxy-{uuid.uuid4().hex}.sock"
+    )
+    site = web.UnixSite(runner, str(socket_path))
+    await site.start()
+
+    rt = RouteTable()
+    rt._routes = [
+        ResolvedRoute(
+            id="socket-service",
+            host_patterns=("socket.localhost",),
+            target_socket=str(socket_path),
+        ),
+    ]
+    rt._portal_html = ""
+
+    proxy_app = make_proxy_app(rt)
+    client = await aiohttp_client(proxy_app)
+    try:
+        async with client.ws_connect(
+            "/ws", headers={"Host": "socket.localhost"}
+        ) as ws:
+            await ws.send_str("hello")
+            msg = await ws.receive()
+            assert msg.type == aiohttp.WSMsgType.TEXT
+            assert msg.data == "echo:hello"
+    finally:
+        await runner.cleanup()
+        socket_path.unlink(missing_ok=True)
 
 
 async def test_proxy_websocket_forwards_handshake_headers(aiohttp_client: type) -> None:

@@ -67,7 +67,12 @@ uv run local-dev-proxy [command] [options]
 
 - `uv`
 - `minio`
-- `s3browser`
+- `s3browser` 0.1.9:
+
+  ```shell
+  uv tool install \
+    https://github.com/andrewtheguy/s3browser/releases/download/v0.1.9/s3browser-0.1.9-py3-none-any.whl
+  ```
 
 ## Configuration
 
@@ -79,7 +84,8 @@ Configuration lives in a per-user file:
 
 (honors `$XDG_CONFIG_HOME`). On first run it is created automatically from the bundled
 sample. It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and
-routes. Logs are written next to it under `~/.config/local-dev-proxy/logs/`.
+routes. Route targets can be TCP ports or Unix domain sockets. Logs are written next to
+it under `~/.config/local-dev-proxy/logs/`.
 `http_port` and `bind` are required, values are type-checked without coercion, and
 unknown keys are rejected rather than silently treated as an older config shape.
 
@@ -155,6 +161,26 @@ hosts = ["webapp.localhost"]
 target_port = 3000
 ```
 
+For an HTTP service listening on a Unix domain socket, use `target_socket_env` in the
+same way as `target_port_env` (or `target_socket` for a fixed path):
+
+```toml
+[services.socketapp]
+command = ["socketapp", "--bind", "unix:{SOCKETAPP_SOCKET}"]
+env = {SOCKETAPP_SOCKET = "socketapp.sock"}
+
+[[services.socketapp.routes]]
+id = "socketapp"
+hosts = ["socketapp.localhost"]
+target_socket_env = "SOCKETAPP_SOCKET"
+```
+
+Set exactly one of `target_port`, `target_port_env`, `target_socket`, or
+`target_socket_env` on each route. `target_host` only applies to TCP targets. Unix
+socket paths must name a writable location and stay within the operating system's
+socket-path length limit. Relative socket paths are resolved from the directory that
+contains `services.toml`, which is also the working directory for managed services.
+
 For services managed externally (not started by the proxy), omit `command` to create an
 unmanaged proxy-only route:
 
@@ -177,7 +203,7 @@ The bundled defaults live in `src/local_dev_proxy/services.toml.sample`.
 ## Troubleshooting
 
 - **Service URL not proxying:** open the manager window's **Services** tab to check the
-  service state, and confirm the port is set in `services.toml`.
+  service state, and confirm the port or Unix socket path is set in `services.toml`.
 - **Proxy not responding:** check `~/.config/local-dev-proxy/logs/manager.log` for
   startup errors. Quit from the window (or the tray menu), then run `uv run local-dev-proxy` again.
 - **View service logs:** use the **Logs** tab (with *Follow* for a live tail).

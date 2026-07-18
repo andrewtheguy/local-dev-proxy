@@ -1040,6 +1040,17 @@ class ManagerController:
 
     @staticmethod
     def _target(service: ServiceDef, route: ServiceRoute) -> str:
+        if route.target_socket is not None:
+            return f"unix:{route.target_socket}"
+        if route.target_socket_env is not None:
+            socket_path = service.env.get(route.target_socket_env)
+            return (
+                f"unix:{socket_path}"
+                if socket_path
+                else f"unix:${{{route.target_socket_env}}}"
+            )
+
+        assert route.target_host is not None
         if route.target_port is not None:
             return f"{route.target_host}:{route.target_port}"
         env_name = route.target_port_env
