@@ -5,9 +5,11 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
+from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from local_dev_proxy import config as config_module
 from local_dev_proxy.config import ProjectPaths
 from local_dev_proxy.gui import ManagerController, _tail_file
 from local_dev_proxy.routes import load_routes
@@ -172,6 +174,39 @@ def test_tail_file_reads_only_requested_lines(tmp_path: Path) -> None:
     assert _tail_file(tmp_path / "missing.log", 20) == ""
 
 
+def test_macos_tray_icon_is_white_with_identical_alpha_mask() -> None:
+    original = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"))
+    macos = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon-macos.png"))
+    assert not original.isNull()
+    assert not macos.isNull()
+    assert macos.size() == original.size()
+
+    opaque_pixels = 0
+    for y in range(original.height()):
+        for x in range(original.width()):
+            original_color = original.pixelColor(x, y)
+            macos_color = macos.pixelColor(x, y)
+            assert macos_color.alpha() == original_color.alpha()
+            if macos_color.alpha():
+                opaque_pixels += 1
+                assert macos_color.red() == 255
+                assert macos_color.green() == 255
+                assert macos_color.blue() == 255
+    assert opaque_pixels == 546
+
+
+def test_macos_selects_white_tray_icon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LOCAL_DEV_PROXY_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr(config_module.sys, "platform", "darwin")
+    selected = config_module.icon_path()
+    expected = PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon-macos.png"
+    assert selected is not None
+    assert selected.name == "tray-icon-macos.png"
+    assert selected.read_bytes() == expected.read_bytes()
+
+
 def test_all_manager_flows_with_screenshots(
     qtbot: object,
     tmp_path: Path,
@@ -265,6 +300,7 @@ def test_all_manager_flows_with_screenshots(
     qtbot.mouseClick(window.view_config_button, Qt.MouseButton.LeftButton)
     assert window.services_stack.currentWidget() is window.readonly_view
     assert window.readonly_config.toPlainText() == preserved_configtest.decode()
+    assert window.edit_config_button.text() == "Stop All && Edit Config"
     assert controller.running
     screenshot("05-config-readonly")
 
@@ -273,6 +309,15 @@ def test_all_manager_flows_with_screenshots(
     assert not controller.running
     assert not window.tabs.isTabEnabled(window.tabs.indexOf(window.logs_tab))
     assert proxies[0].stopped
+    assert window.start_all_button.isVisible()
+    assert not window.view_config_button.isVisible()
+    assert window.start_all_button.parentWidget() is window.services_tab
+    assert (
+        window.start_all_button.mapTo(
+            window, window.start_all_button.rect().topLeft()
+        ).y()
+        < window.config_editor.mapTo(window, window.config_editor.rect().topLeft()).y()
+    )
     screenshot("06-config-editing")
 
     window.config_editor.setPlainText(preserved_configtest.decode() + "\n[")

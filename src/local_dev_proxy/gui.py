@@ -275,6 +275,9 @@ class ManagerWindow(QMainWindow):
         self.view_config_button = QPushButton("View Config", self.services_tab)
         self.view_config_button.setObjectName("view_config_button")
         lifecycle.addWidget(self.view_config_button)
+        self.start_all_button = QPushButton("Start All", self.services_tab)
+        self.start_all_button.setObjectName("start_all_button")
+        lifecycle.addWidget(self.start_all_button)
         lifecycle.addStretch(1)
         self.status_label = QLabel(self.services_tab)
         self.status_label.setObjectName("status_label")
@@ -344,8 +347,10 @@ class ManagerWindow(QMainWindow):
         self.readonly_config.setFont(_monospace_font())
         readonly_layout.addWidget(self.readonly_config, 1)
         readonly_actions = QHBoxLayout()
+        # A single ampersand is a hidden Qt mnemonic marker. Doubling it paints
+        # the requested literal "&" in the button label.
         self.edit_config_button = QPushButton(
-            "Stop All & Edit Config", self.readonly_view
+            "Stop All && Edit Config", self.readonly_view
         )
         self.edit_config_button.setObjectName("edit_config_button")
         readonly_actions.addWidget(self.edit_config_button)
@@ -363,8 +368,6 @@ class ManagerWindow(QMainWindow):
         self.config_editor.setFont(_monospace_font())
         editor_layout.addWidget(self.config_editor, 1)
         editor_actions = QHBoxLayout()
-        self.start_all_button = QPushButton("Start All", self.editor_view)
-        self.start_all_button.setObjectName("start_all_button")
         self.validate_button = QPushButton("Validate", self.editor_view)
         self.validate_button.setObjectName("validate_button")
         self.save_button = QPushButton("Save", self.editor_view)
@@ -372,7 +375,6 @@ class ManagerWindow(QMainWindow):
         self.reload_config_button = QPushButton("Reload from disk", self.editor_view)
         self.reload_config_button.setObjectName("reload_config_button")
         for button in (
-            self.start_all_button,
             self.validate_button,
             self.save_button,
             self.reload_config_button,
@@ -479,6 +481,12 @@ class ManagerWindow(QMainWindow):
                 border-radius: 4px; padding: 6px;
             }
             QLabel#dirty_label { color: #b54708; }
+            QPushButton#start_all_button {
+                color: #ffffff; background: #175cd3; border: 1px solid #1849a9;
+                border-radius: 4px; font-weight: 600;
+            }
+            QPushButton#start_all_button:hover { background: #1849a9; }
+            QPushButton#start_all_button:pressed { background: #194185; }
             QTabWidget::pane { border: 1px solid #cfd4dc; background: #ffffff; }
             QTabBar::tab { padding: 8px 18px; }
             QTreeView, QPlainTextEdit {
@@ -503,6 +511,7 @@ class ManagerWindow(QMainWindow):
         }
         self.services_stack.setCurrentWidget(pages[mode])
         self.view_config_button.setVisible(mode != "edit")
+        self.start_all_button.setVisible(mode == "edit")
         if mode == "services":
             self.view_config_button.setText("View Config")
         elif mode == "readonly":

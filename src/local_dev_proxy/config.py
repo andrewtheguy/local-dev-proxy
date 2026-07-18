@@ -6,6 +6,7 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 import os
 import shutil
+import sys
 import tempfile
 from collections.abc import Mapping
 
@@ -14,6 +15,7 @@ from filelock import FileLock, Timeout
 _APP_NAME = "local-dev-proxy"
 _SAMPLE_RESOURCE = "services.toml.sample"
 _ICON_RESOURCE = "assets/tray-icon.png"
+_MACOS_ICON_RESOURCE = "assets/tray-icon-macos.png"
 _DOCK_ICON_RESOURCE = "assets/dock-icon.png"
 
 # Single-instance lock for the running manager (proxy + service manager). Backed
@@ -174,6 +176,8 @@ def _cached_icon(resource_name: str, cache_name: str) -> Path | None:
 
 def icon_path() -> Path | None:
     """Return a filesystem path to the bundled system-tray icon, or None."""
+    if sys.platform == "darwin":
+        return _cached_icon(_MACOS_ICON_RESOURCE, "tray-icon-macos.png")
     return _cached_icon(_ICON_RESOURCE, "tray-icon.png")
 
 
