@@ -558,17 +558,18 @@ def run_gui() -> None:
     root.geometry("760x560")
 
     app = ManagerApp(root, paths, lock_fd)
-    # Build the window first so a bad config doesn't prevent the UI from coming
-    # up; start_services() rolls back on failure, leaving services stopped so
-    # the user can repair the config from the Config tab and press Start.
-    app.build_ui()
-    app.install_icon()
-    app.wire_lifecycle()
-    app.install_signals()
+    # Start services before building the window so the Services tab paints in its
+    # running (list) view from the first frame — no flash of the config editor.
+    # start_services() rolls back on failure (running stays False), so a bad
+    # config simply opens the tab in edit mode; the window comes up either way.
     try:
         app.start_services()
     except Exception as exc:  # noqa: BLE001 — surface, don't crash the window
         print(f"Startup failed; services left stopped: {exc}", file=sys.stderr)
+    app.build_ui()
+    app.install_icon()
+    app.wire_lifecycle()
+    app.install_signals()
 
     try:
         root.mainloop()
