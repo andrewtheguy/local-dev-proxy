@@ -162,12 +162,16 @@ def _icon(path: Path | None) -> QIcon:
     return icon
 
 
-def _monospace_font(point_size: int | None = None) -> QFont:
+def _monospace_font(
+    point_size: int | None = None, weight: QFont.Weight | None = None
+) -> QFont:
     font = QFont(QApplication.font())
     font.setFamily("Menlo")
     font.setStyleHint(QFont.StyleHint.Monospace)
     if point_size is not None:
         font.setPointSize(point_size)
+    if weight is not None:
+        font.setWeight(weight)
     return font
 
 
@@ -324,6 +328,8 @@ class _TomlSyntaxHighlighter(QSyntaxHighlighter):
             content_start < content_end
             and text[content_start] == "["
             and text[content_end - 1] == "]"
+            and not protected[content_start]
+            and not protected[content_end - 1]
         ):
             self.setFormat(
                 content_start,
@@ -610,7 +616,7 @@ class ManagerWindow(QMainWindow):
         self.log_text = QPlainTextEdit(self.logs_tab)
         self.log_text.setObjectName("log_text")
         self.log_text.setReadOnly(True)
-        self.log_text.setFont(_monospace_font(10))
+        self.log_text.setFont(_monospace_font(10, QFont.Weight.Medium))
         self.log_text.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         layout.addWidget(self.log_text, 1)
         self.tabs.addTab(self.logs_tab, "Logs")
@@ -685,6 +691,7 @@ class ManagerWindow(QMainWindow):
             QPlainTextEdit[readOnly="true"] {
                 background: #f2f4f7; color: #475467; border-color: #d0d5dd;
             }
+            QPlainTextEdit#log_text { color: #1d2939; }
             QHeaderView::section {
                 background: #eaecf0; color: #344054; padding: 6px;
                 border: 0; border-right: 1px solid #d0d5dd;

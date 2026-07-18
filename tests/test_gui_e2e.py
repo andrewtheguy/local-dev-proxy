@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtGui import QColor, QImage, QPalette, QTextDocument
+from PySide6.QtGui import QColor, QFont, QImage, QPalette, QTextDocument
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPlainTextEdit
 
@@ -190,15 +190,17 @@ def test_toml_syntax_highlighting(qtbot: object) -> None:
     editor = QPlainTextEdit()
     qtbot.addWidget(editor)
     highlighter = _TomlSyntaxHighlighter(editor.document())
-    editor.setPlainText(
-        'port = 2800 # note\n'
-        '[services.demo]\n'
-        'name = "value#inside"\n'
-        'enabled = true\n'
-        'description = """first\n'
-        '# still string\n'
-        'last""" # comment'
-    )
+    source_lines = [
+        "port = 2800 # note",
+        "[services.demo]",
+        'name = "value#inside"',
+        "enabled = true",
+        'description = """first',
+        '[opening-protected""" suffix]',
+        '[prefix """closing-protected]',
+        'last""" # comment',
+    ]
+    editor.setPlainText("\n".join(source_lines))
     highlighter.rehighlight()
 
     document = editor.document()
@@ -210,7 +212,10 @@ def test_toml_syntax_highlighting(qtbot: object) -> None:
     assert _highlight_color_at(document, 2, 13) == QColor("#067647")
     assert _highlight_color_at(document, 3, 10) == QColor("#b54708")
     assert _highlight_color_at(document, 5, 0) == QColor("#067647")
-    assert _highlight_color_at(document, 6, 8) == QColor("#667085")
+    assert _highlight_color_at(document, 6, len(source_lines[6]) - 1) == QColor(
+        "#067647"
+    )
+    assert _highlight_color_at(document, 7, 8) == QColor("#667085")
 
 
 def test_macos_tray_icon_is_white_with_identical_alpha_mask() -> None:
@@ -427,6 +432,10 @@ def test_all_manager_flows_with_screenshots(
     window.log_lines_spin.setValue(100)
     qtbot.mouseClick(window.refresh_logs_button, Qt.MouseButton.LeftButton)
     assert "s3browser: deterministic log line 349" in window.log_text.toPlainText()
+    assert window.log_text.font().weight() == QFont.Weight.Medium
+    assert window.log_text.palette().color(QPalette.ColorRole.Text) == QColor(
+        "#1d2939"
+    )
     window.log_follow_check.setChecked(True)
     with managers[-1].get_log_path("s3browser").open("a") as log:
         log.write("s3browser: newest followed line\n")
