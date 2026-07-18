@@ -1,13 +1,4 @@
-import { TabWidget, Button, ListView, TextEdit, ComboBox, SpinBox, CheckBox, GroupBox, ScrollView } from "std-widgets.slint";
-
-// One row of the Services table.
-export struct ServiceRow {
-    name: string,
-    status: string,
-    pid: string,
-    restarts: string,
-    exit: string,
-}
+import { TabWidget, Button, ListView, TextEdit, ComboBox, SpinBox, CheckBox, GroupBox, ScrollView, StandardTableView } from "std-widgets.slint";
 
 // One row of the (flat, grouped) Routes list. `kind` is service-header | route | note.
 export struct RouteRow {
@@ -36,7 +27,7 @@ export component MainWindow inherits Window {
     in property <string> status_text;
     in property <int> status_level;             // 0 neutral, 1 success, 2 error
 
-    in property <[ServiceRow]> service_rows;
+    in property <[[StandardListViewItem]]> service_rows;
     in-out property <int> selected_row: -1;
     in property <bool> can_start;
     in property <bool> can_stop;
@@ -133,37 +124,18 @@ export component MainWindow inherits Window {
                     // --- services list view ---
                     if root.view == "services": VerticalLayout {
                         spacing: 4px;
-                        Rectangle {
-                            height: 24px;
-                            background: #ececec;
-                            HorizontalLayout {
-                                padding-left: 8px;
-                                spacing: 8px;
-                                Text { text: "service"; width: 150px; font-weight: 700; vertical-alignment: center; }
-                                Text { text: "status"; width: 90px; font-weight: 700; vertical-alignment: center; }
-                                Text { text: "pid"; width: 70px; font-weight: 700; vertical-alignment: center; }
-                                Text { text: "restarts"; width: 70px; font-weight: 700; vertical-alignment: center; }
-                                Text { text: "exit"; width: 70px; font-weight: 700; vertical-alignment: center; }
-                            }
-                        }
-                        ListView {
+                        StandardTableView {
                             vertical-stretch: 1;
-                            for row[idx] in root.service_rows: Rectangle {
-                                height: 26px;
-                                background: idx == root.selected_row ? #cfe0f5 : transparent;
-                                TouchArea {
-                                    clicked => { root.selected_row = idx; root.row_selected(idx); }
-                                    HorizontalLayout {
-                                        padding-left: 8px;
-                                        spacing: 8px;
-                                        Text { text: row.name; width: 150px; vertical-alignment: center; }
-                                        Text { text: row.status; width: 90px; vertical-alignment: center; }
-                                        Text { text: row.pid; width: 70px; vertical-alignment: center; }
-                                        Text { text: row.restarts; width: 70px; vertical-alignment: center; }
-                                        Text { text: row.exit; width: 70px; vertical-alignment: center; }
-                                    }
-                                }
-                            }
+                            columns: [
+                                { title: "service", min-width: 150px },
+                                { title: "status", min-width: 90px },
+                                { title: "pid", min-width: 70px },
+                                { title: "restarts", min-width: 70px },
+                                { title: "exit code", min-width: 80px },
+                            ];
+                            rows: root.service_rows;
+                            current-row <=> root.selected_row;
+                            current-row-changed(idx) => { root.row_selected(idx); }
                         }
                         GroupBox {
                             vertical-stretch: 0;
@@ -279,34 +251,64 @@ export component MainWindow inherits Window {
                         text: "Routes grouped by service — click a URL row to open it in your browser.";
                         wrap: word-wrap;
                     }
-                    if !root.editing: ListView {
+                    if !root.editing: Rectangle {
                         vertical-stretch: 1;
-                        for row in root.route_rows: Rectangle {
-                            height: 24px;
-                            TouchArea {
-                                mouse-cursor: row.url != "" ? pointer : default;
-                                clicked => { if (row.url != "") { root.open_url(row.url); } }
+                        border-width: 1px;
+                        border-color: #cccccc;
+                        border-radius: 4px;
+                        background: #ffffff;
+                        clip: true;
+                        VerticalLayout {
+                            // Column header.
+                            Rectangle {
+                                height: 26px;
+                                background: #ececec;
                                 HorizontalLayout {
-                                    padding-left: row.kind == "route" ? 24px : 8px;
+                                    padding-left: 8px;
+                                    padding-right: 8px;
                                     spacing: 8px;
-                                    Text {
-                                        text: row.text;
-                                        width: 330px;
-                                        font-weight: row.kind == "service-header" ? 700 : 400;
-                                        color: row.muted ? #999999 : #000000;
-                                        vertical-alignment: center;
-                                        overflow: elide;
-                                    }
-                                    Text {
-                                        text: row.url;
-                                        width: 260px;
-                                        color: row.muted ? #999999 : #0055cc;
-                                        vertical-alignment: center;
-                                    }
-                                    Text {
-                                        text: row.target;
-                                        color: #444444;
-                                        vertical-alignment: center;
+                                    Text { text: "service / route"; width: 300px; font-weight: 700; vertical-alignment: center; }
+                                    Text { text: "url"; width: 260px; font-weight: 700; vertical-alignment: center; }
+                                    Text { text: "→ proxies to"; horizontal-stretch: 1; font-weight: 700; vertical-alignment: center; }
+                                }
+                            }
+                            ListView {
+                                vertical-stretch: 1;
+                                for row[idx] in root.route_rows: Rectangle {
+                                    height: 26px;
+                                    background: ta.has-hover && row.url != "" ? #eaf2fb
+                                        : row.kind == "service-header" ? #f4f4f4
+                                        : Math.mod(idx, 2) == 0 ? #ffffff : #fafafa;
+                                    ta := TouchArea {
+                                        mouse-cursor: row.url != "" ? pointer : default;
+                                        clicked => { if (row.url != "") { root.open_url(row.url); } }
+                                        HorizontalLayout {
+                                            padding-left: row.kind == "route" ? 28px : 8px;
+                                            padding-right: 8px;
+                                            spacing: 8px;
+                                            Text {
+                                                text: row.text;
+                                                width: row.kind == "route" ? 280px : 300px;
+                                                font-weight: row.kind == "service-header" ? 700 : 400;
+                                                color: row.muted ? #999999 : #101010;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: row.url;
+                                                width: 260px;
+                                                color: row.muted ? #999999 : #0055cc;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: row.target;
+                                                horizontal-stretch: 1;
+                                                color: #444444;
+                                                vertical-alignment: center;
+                                                overflow: elide;
+                                            }
+                                        }
                                     }
                                 }
                             }
