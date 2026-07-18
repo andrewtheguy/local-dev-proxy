@@ -87,6 +87,10 @@ custom_info_plist = "packaging/Info.plist"
 [tool.cxfreeze.bdist_dmg]
 volume_label = "Local Dev Proxy"
 applications_shortcut = true
+# "builtin-arrow" gives a properly sized (640x380) Finder window with the app
+# and Applications icons positioned for a drag-to-install layout, instead of
+# the small default window.
+background = "builtin-arrow"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
