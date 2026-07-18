@@ -80,6 +80,8 @@ Configuration lives in a per-user file:
 (honors `$XDG_CONFIG_HOME`). On first run it is created automatically from the bundled
 sample. It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and
 routes. Logs are written next to it under `~/.config/local-dev-proxy/logs/`.
+`http_port` and `bind` are required, values are type-checked without coercion, and
+unknown keys are rejected rather than silently treated as an older config shape.
 
 Edit it from the **Services** tab of the manager window (the config is only editable while
 the services are stopped — press **View Config**, then **Stop All & Edit Config**), or by

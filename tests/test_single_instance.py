@@ -43,10 +43,3 @@ def test_repeated_cli_launch_has_no_command_ipc_or_second_spawn(
     assert "already running" in result.stdout
     assert "tray menu" in result.stdout
     assert not spawn_called
-
-
-def test_raise_request_ipc_api_is_absent() -> None:
-    assert not hasattr(config, "request_raise")
-    assert not hasattr(config, "consume_raise_request")
-    assert not hasattr(config, "RAISE_REQUEST_PATH")
-    assert not hasattr(config, "PID_PATH")

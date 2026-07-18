@@ -80,15 +80,6 @@ def user_config_dir() -> Path:
     return (base / _APP_NAME).resolve()
 
 
-def get_paths(config_dir: Path | None = None) -> ProjectPaths:
-    root = (config_dir or user_config_dir()).resolve()
-    return ProjectPaths(
-        config_dir=root,
-        services_file=root / "services.toml",
-        logs_dir=root / "logs",
-    )
-
-
 def bundled_resource(name: str) -> Traversable:
     """Return a Traversable for a resource shipped inside the package."""
     resource = resources.files("local_dev_proxy")
@@ -97,12 +88,17 @@ def bundled_resource(name: str) -> Traversable:
     return resource
 
 
-def ensure_config(paths: ProjectPaths | None = None) -> ProjectPaths:
+def ensure_config() -> ProjectPaths:
     """Create the config/log dirs and seed services.toml from the sample.
 
     Idempotent: safe to call at every entrypoint.
     """
-    resolved = paths or get_paths()
+    root = user_config_dir()
+    resolved = ProjectPaths(
+        config_dir=root,
+        services_file=root / "services.toml",
+        logs_dir=root / "logs",
+    )
     resolved.config_dir.mkdir(parents=True, exist_ok=True)
     resolved.logs_dir.mkdir(parents=True, exist_ok=True)
 

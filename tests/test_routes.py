@@ -51,8 +51,8 @@ def test_manifest_fields(tmp_path: Path) -> None:
     assert "s3browser" in manifest.services
 
 
-def test_manifest_defaults(tmp_path: Path) -> None:
-    toml = """
+def test_manifest_requires_proxy_settings(tmp_path: Path) -> None:
+    service = """
 [services.app]
 command = ["serve"]
 
@@ -62,11 +62,51 @@ hosts = ["app.localhost"]
 target_port = 3000
 """
     path = tmp_path / "services.toml"
-    path.write_text(toml)
-    manifest = load_routes(path)
+    path.write_text(service)
+    with pytest.raises(RouteConfigError, match="http_port is required"):
+        load_routes(path)
 
-    assert manifest.http_port == 2800
-    assert manifest.bind == ("127.0.0.1", "::1")
+    path.write_text(f"http_port = 2800\n{service}")
+    with pytest.raises(RouteConfigError, match="bind is required"):
+        load_routes(path)
+
+
+def test_manifest_rejects_unknown_and_coerced_fields(tmp_path: Path) -> None:
+    path = tmp_path / "services.toml"
+    path.write_text(
+        """
+http_port = "2800"
+bind = ["127.0.0.1"]
+
+[services.app]
+command = ["serve"]
+
+[[services.app.routes]]
+id = "app"
+hosts = ["app.localhost"]
+target_port = 3000
+"""
+    )
+    with pytest.raises(RouteConfigError, match="http_port must be an integer"):
+        load_routes(path)
+
+    path.write_text(
+        """
+http_port = 2800
+bind = ["127.0.0.1"]
+old_admin_port = 2801
+
+[services.app]
+command = ["serve"]
+
+[[services.app.routes]]
+id = "app"
+hosts = ["app.localhost"]
+target_port = 3000
+"""
+    )
+    with pytest.raises(RouteConfigError, match="unknown keys: old_admin_port"):
+        load_routes(path)
 
 
 def test_resolve_command_replaces_placeholders() -> None:
@@ -153,7 +193,9 @@ target_port = 3000
     path = tmp_path / "services.toml"
     path.write_text(toml)
 
-    with pytest.raises(RouteConfigError, match="services.bad.command must be a non-empty list"):
+    with pytest.raises(
+        RouteConfigError, match="services.bad.command must be a non-empty list"
+    ):
         load_routes(path)
 
 
