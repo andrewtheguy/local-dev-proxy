@@ -277,13 +277,12 @@ class LogsTab(ttk.Frame):
             self.after(_POLL_MS, self._tick)
 
     def _set_text(self, body: str) -> None:
-        at_bottom = self._text.yview()[1] >= 0.999
         self._text.config(state="normal")
         self._text.delete("1.0", "end")
         self._text.insert("1.0", body)
         self._text.config(state="disabled")
-        if at_bottom:
-            self._text.see("end")
+        # Pin to the newest line (bottom), like `tail -f`.
+        self._text.see("end")
 
 
 class RoutesTab(ttk.Frame):
