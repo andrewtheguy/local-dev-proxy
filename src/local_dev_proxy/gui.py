@@ -213,6 +213,7 @@ class ManagerController:
     def prime(self) -> None:
         """Populate the view from the initial run-state, before the first frame."""
         self._populate_log_services()
+        self._reload_routes()
         self._refresh()
 
     def start_timers(self) -> None:
@@ -376,6 +377,8 @@ class ManagerController:
             self._set_status(f"start failed: {exc}", _ERROR)
             return
         self._set_status("saved & started ✓", _SUCCESS)
+        self._reload_routes()  # config may have changed while editing
+        self._populate_log_services()
         self._sync_run_state()  # running is now True -> switches to the service list
 
     # --- config editor --------------------------------------------------------
