@@ -823,6 +823,7 @@ class ManagerController:
         window.service_tree.selectionModel().selectionChanged.connect(
             self._on_row_selected
         )
+        window.service_tree.doubleClicked.connect(self._open_service_logs)
         window.config_editor.textChanged.connect(self._on_config_edited)
         window.log_service_combo.currentIndexChanged.connect(self._on_select_log)
         window.log_lines_spin.valueChanged.connect(lambda _value: self._refresh_logs())
@@ -1038,6 +1039,23 @@ class ManagerController:
         elif not self.window.service_tree.selectionModel().hasSelection():
             self._selected_name = None
         self._update_service_controls()
+
+    def _open_service_logs(self, index: QModelIndex) -> None:
+        service_index = index.siblingAtColumn(0)
+        value = service_index.data(Qt.ItemDataRole.UserRole)
+        if value is None:
+            return
+
+        self._populate_log_services()
+        combo = self.window.log_service_combo
+        log_index = combo.findText(str(value), Qt.MatchFlag.MatchExactly)
+        if log_index < 0:
+            return
+
+        with QSignalBlocker(combo):
+            combo.setCurrentIndex(log_index)
+        self.window.tabs.setCurrentWidget(self.window.logs_tab)
+        self._refresh_logs()
 
     def _act(self, method: str) -> None:
         manager = self.service_manager

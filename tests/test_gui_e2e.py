@@ -322,6 +322,16 @@ def test_all_manager_flows_with_screenshots(
     assert "s3browser (running)" in window.service_controls.title()
     screenshot("02-service-selected")
 
+    QTest.mouseDClick(
+        window.service_tree.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=window.service_tree.visualRect(service_index).center(),
+    )
+    qtbot.waitUntil(lambda: window.tabs.currentWidget() is window.logs_tab)
+    assert window.log_service_combo.currentText() == "s3browser"
+    assert "s3browser: deterministic log line 349" in window.log_text.toPlainText()
+    window.tabs.setCurrentWidget(window.services_tab)
+
     qtbot.mouseClick(window.stop_service_button, Qt.MouseButton.LeftButton)
     assert (
         window.service_model.index(_find_service_row(controller, "s3browser"), 1).data()
