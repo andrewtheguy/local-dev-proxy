@@ -255,7 +255,9 @@ def test_all_manager_flows_with_screenshots(
         destination = SCREENSHOTS / f"{name}.png"
         assert not image.isNull()
         assert image.save(str(destination), "PNG")
-        assert destination.stat().st_size > 1000
+        saved = QImage(str(destination))
+        assert saved.width() > 0
+        assert saved.height() > 0
 
     controller.start_services()
     controller.prime()

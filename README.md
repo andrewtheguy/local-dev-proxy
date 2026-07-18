@@ -121,8 +121,7 @@ A window with three tabs:
 ### Lifecycle
 
 - **Close the window** → it hides to the system-tray icon; the proxy and services
-  keep running. Choose **Open Manager** from the tray menu (or re-run
-  `uv run local-dev-proxy`) to reopen it.
+  keep running. Choose **Open Manager** from the tray menu to reopen it.
 - **Quit** (the in-window *Quit* button or the tray menu's *Quit*) → stops the
   proxy, stops all managed services, and exits the app.
 

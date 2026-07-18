@@ -11,9 +11,10 @@ permissions:
 
 jobs:
   build:
-    # The app is cross-platform (Slint window + system tray), so lint, type-check,
-    # and tests run on all three desktop OSes. (There are no GUI tests; these
-    # steps exercise the proxy/config/routes logic, which must pass everywhere.)
+    # The app is cross-platform (PySide6 window + system tray), so lint, type-check,
+    # and tests run on all three desktop OSes. The suite includes the
+    # tests/test_gui_e2e.py GUI end-to-end coverage alongside the proxy/config/routes
+    # logic, all of which must pass everywhere.
     strategy:
       fail-fast: false
       matrix:

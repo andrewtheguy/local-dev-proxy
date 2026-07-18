@@ -23,5 +23,9 @@ def start_proxy(paths: ProjectPaths) -> ProxyServer:
         http_port=manifest.http_port,
         bind=manifest.bind,
     )
-    server.start()
+    try:
+        server.start()
+    except Exception:
+        server.stop()
+        raise
     return server
