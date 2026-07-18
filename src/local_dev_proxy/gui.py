@@ -275,6 +275,13 @@ class ManagerWindow(QMainWindow):
         self.view_config_button = QPushButton("View Config", self.services_tab)
         self.view_config_button.setObjectName("view_config_button")
         lifecycle.addWidget(self.view_config_button)
+        # A single ampersand is a hidden Qt mnemonic marker. Doubling it paints
+        # the requested literal "&" in the button label.
+        self.edit_config_button = QPushButton(
+            "Stop All && Edit Config", self.services_tab
+        )
+        self.edit_config_button.setObjectName("edit_config_button")
+        lifecycle.addWidget(self.edit_config_button)
         self.start_all_button = QPushButton("Start All", self.services_tab)
         self.start_all_button.setObjectName("start_all_button")
         lifecycle.addWidget(self.start_all_button)
@@ -346,16 +353,6 @@ class ManagerWindow(QMainWindow):
         self.readonly_config.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.readonly_config.setFont(_monospace_font())
         readonly_layout.addWidget(self.readonly_config, 1)
-        readonly_actions = QHBoxLayout()
-        # A single ampersand is a hidden Qt mnemonic marker. Doubling it paints
-        # the requested literal "&" in the button label.
-        self.edit_config_button = QPushButton(
-            "Stop All && Edit Config", self.readonly_view
-        )
-        self.edit_config_button.setObjectName("edit_config_button")
-        readonly_actions.addWidget(self.edit_config_button)
-        readonly_actions.addStretch(1)
-        readonly_layout.addLayout(readonly_actions)
         self.services_stack.addWidget(self.readonly_view)
 
         self.editor_view = QWidget(self.services_stack)
@@ -511,6 +508,7 @@ class ManagerWindow(QMainWindow):
         }
         self.services_stack.setCurrentWidget(pages[mode])
         self.view_config_button.setVisible(mode != "edit")
+        self.edit_config_button.setVisible(mode == "readonly")
         self.start_all_button.setVisible(mode == "edit")
         if mode == "services":
             self.view_config_button.setText("View Config")

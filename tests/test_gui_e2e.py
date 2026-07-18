@@ -301,6 +301,15 @@ def test_all_manager_flows_with_screenshots(
     assert window.services_stack.currentWidget() is window.readonly_view
     assert window.readonly_config.toPlainText() == preserved_configtest.decode()
     assert window.edit_config_button.text() == "Stop All && Edit Config"
+    assert window.edit_config_button.parentWidget() is window.services_tab
+    back_position = window.view_config_button.mapTo(
+        window, window.view_config_button.rect().topLeft()
+    )
+    edit_position = window.edit_config_button.mapTo(
+        window, window.edit_config_button.rect().topLeft()
+    )
+    assert edit_position.x() > back_position.x()
+    assert edit_position.y() == back_position.y()
     assert controller.running
     screenshot("05-config-readonly")
 
