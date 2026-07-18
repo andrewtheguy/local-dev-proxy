@@ -12,12 +12,12 @@ import webbrowser
 from pathlib import Path
 from tkinter import ttk
 
-from .config import LOCK_PATH, ProjectPaths, ensure_config, icon_path
+from .config import LOCK_PATH, ProjectPaths, dock_icon_path, ensure_config, icon_path
 from .process_manager import ServiceManager
 from .proxy import ProxyServer
 from .routes import RouteConfigError, load_routes, validate_toml
 from .services import start_proxy, start_services_managed
-from .status_item import install_status_item, remove_status_item
+from .status_item import install_status_item, remove_status_item, set_dock_icon
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +157,7 @@ class ManagerApp:
             notebook.tab(tab, state=state)
 
     def install_icon(self) -> None:
+        set_dock_icon(dock_icon_path())
         self._status_handle = install_status_item(icon_path(), self._raise_flag.set)
 
     # --- signals / window plumbing -------------------------------------------
