@@ -1,17 +1,34 @@
 Local dev proxy: built-in reverse proxy + process manager with a cross-platform manager window and a system-tray app.
 
 > **No backward compatibility while on `v0.0.x`.** Any release may make breaking changes to
-> the config format, CLI, or behavior without a deprecation path. Pin to an exact version.
+> the configuration format or behavior without a deprecation path. Pin to an exact version.
 
 ## Installation
 
 Cross-platform (macOS, Windows, Linux) — the manager window and system-tray icon
-are built with [PySide6 / Qt 6](https://doc.qt.io/qtforpython-6/). Requires Python 3.13+.
+are built with [PySide6 / Qt 6](https://doc.qt.io/qtforpython-6/).
 
-### Install from a release wheel (recommended)
+### Install the native desktop application (recommended)
 
-Install directly from a release asset URL — no checkout, no index config. Grab the wheel
-URL from the [Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
+Download the matching installer from the
+[Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
+
+- **macOS 13 or newer (Apple silicon/ARM64 only):** download the `.dmg`, open it, and copy
+  **Local Dev Proxy.app** to **Applications**.
+- **Windows:** download the `.msi` and run the installer. Launch **Local Dev Proxy**
+  from the Start menu.
+
+The native packages include Python, Qt, and the application's Python dependencies. You
+do not need to install Python or use a terminal to launch the manager. Release builds
+do not require paid signing certificates. macOS Gatekeeper or Windows SmartScreen may
+therefore require you to explicitly approve the first launch.
+
+### Install from a release wheel
+
+The universal Python wheel remains available for Linux, development environments, and
+users who prefer Python tooling. This method requires Python 3.13+ and `uv`.
+
+Install directly from the wheel URL on the Releases page:
 
 ```shell
 uv tool install https://github.com/andrewtheguy/local-dev-proxy/releases/download/vx.y.z/local_dev_proxy-x.y.z-py3-none-any.whl
@@ -19,7 +36,7 @@ uv tool install https://github.com/andrewtheguy/local-dev-proxy/releases/downloa
 
 Then run it with `local-dev-proxy`.
 
-### Install from the GitHub Pages package index
+### Install the wheel from the GitHub Pages package index
 
 Lets you pin by version instead of pasting a wheel URL:
 
@@ -32,7 +49,7 @@ uv tool install \
 ### Install from a local checkout
 
 Installs the current working tree as a global tool so `local-dev-proxy` is on your PATH
-(works without a published release):
+(works without a published release). This requires Python 3.13+ and `uv`:
 
 ```shell
 uv tool install .

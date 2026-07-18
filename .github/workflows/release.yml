@@ -74,20 +74,95 @@ jobs:
       - name: Upload wheel artifact
         uses: actions/upload-artifact@v4
         with:
-          name: python-wheel
+          name: release-python-wheel
           path: dist/*.whl
           if-no-files-found: error
 
+  build-macos-arm64-app:
+    needs: prepare
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Verify ARM64 runner
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Create macOS app bundle
+        run: uvx --from briefcase==0.4.4 briefcase create macOS app --no-input
+
+      - name: Build macOS app bundle
+        run: uvx --from briefcase==0.4.4 briefcase build macOS app --no-input
+
+      - name: Package macOS app as DMG
+        run: >-
+          uvx --from briefcase==0.4.4 briefcase package macOS app
+          --packaging-format dmg
+          --adhoc-sign
+          --no-notarize
+          --no-input
+
+      - name: Upload macOS app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-arm64-app
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  build-windows-msi:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Create Windows app
+        run: uvx --from briefcase==0.4.4 briefcase create windows app --no-input
+
+      - name: Build Windows app
+        run: uvx --from briefcase==0.4.4 briefcase build windows app --no-input
+
+      - name: Package Windows app as MSI
+        run: >-
+          uvx --from briefcase==0.4.4 briefcase package windows app
+          --packaging-format msi
+          --adhoc-sign
+          --no-input
+
+      - name: Upload Windows MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-msi
+          path: dist/*.msi
+          if-no-files-found: error
+
   create-release:
-    needs: [prepare, build-wheel]
+    needs: [prepare, build-wheel, build-macos-arm64-app, build-windows-msi]
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download wheel artifacts
+      - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: python-wheel*
+          pattern: release-*
           path: release-assets
+          merge-multiple: true
 
       - name: Create GitHub release
         env:
@@ -95,11 +170,18 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          mapfile -d '' assets < <(find release-assets -type f -name '*.whl' -print0 | sort -z)
-          if [ "${#assets[@]}" -eq 0 ]; then
-            echo "No wheel assets found under release-assets" >&2
-            exit 1
-          fi
+          for extension in whl dmg msi; do
+            if ! find release-assets -type f -name "*.${extension}" -print -quit | grep -q .; then
+              echo "No .${extension} release asset found under release-assets" >&2
+              exit 1
+            fi
+          done
+
+          mapfile -d '' assets < <(
+            find release-assets -type f \
+              \( -name '*.whl' -o -name '*.dmg' -o -name '*.msi' \) \
+              -print0 | sort -z
+          )
 
           prerelease_flag=""
           if [ "$GITHUB_REF_NAME" != "main" ]; then

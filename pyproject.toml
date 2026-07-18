@@ -9,6 +9,8 @@ description = "Local development process orchestration with a built-in reverse p
 authors = [{ name = "Andrew Chen", email = "hello@andrewtheguy.com" }]
 readme = "README.md"
 requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
   "aiohttp>=3.9.0",
   "filelock>=3.31.0",
@@ -19,6 +21,10 @@ dependencies = [
 
 [project.gui-scripts]
 local-dev-proxy = "local_dev_proxy.gui:run_gui"
+
+[project.urls]
+Homepage = "https://github.com/andrewtheguy/local-dev-proxy"
+Repository = "https://github.com/andrewtheguy/local-dev-proxy"
 
 [dependency-groups]
 dev = [
@@ -39,6 +45,21 @@ artifacts = [
   "src/local_dev_proxy/assets/*",
   "src/local_dev_proxy/services.toml.sample",
 ]
+
+[tool.briefcase]
+project_name = "Local Dev Proxy"
+bundle = "com.andrewtheguy"
+
+[tool.briefcase.app.local-dev-proxy]
+formal_name = "Local Dev Proxy"
+description = "Local reverse proxy and development process manager."
+long_description = "Local development process orchestration with a built-in reverse proxy and manager UI."
+sources = ["src/local_dev_proxy"]
+icon = "src/local_dev_proxy/assets/dock-icon"
+
+[tool.briefcase.app.local-dev-proxy.macOS]
+min_os_version = "13.0"
+universal_build = false
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
