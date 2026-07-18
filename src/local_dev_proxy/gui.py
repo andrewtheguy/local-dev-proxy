@@ -200,12 +200,15 @@ class ServicesTab(ttk.Frame):
     """Combined services + config tab.
 
     While services are running it shows the live status list with per-service
-    Start / Stop / Restart. **Stop to Edit** stops everything and swaps the body
-    to the ``services.toml`` editor; **Start All** validates, saves, and starts,
-    swapping back to the list. The active view mirrors ``app.running``.
+    Start / Stop / Restart for the selected row. **Stop All & Edit Config** stops
+    everything and swaps the body to the ``services.toml`` editor; **Start All**
+    validates, saves, and starts, swapping back to the list. The active view
+    mirrors ``app.running``.
     """
 
     COLUMNS = ("status", "pid", "restarts", "exit")
+    # Statuses whose service can be started/stopped/restarted individually.
+    _CONTROLLABLE = frozenset({"running", "stopped", "crashed"})
 
     def __init__(self, master: tk.Misc, app: ManagerApp) -> None:
         super().__init__(master, padding=8)
@@ -217,7 +220,7 @@ class ServicesTab(ttk.Frame):
 
         lifecycle = ttk.Frame(self)
         lifecycle.pack(fill="x", pady=(0, 4))
-        self._toggle_btn = ttk.Button(lifecycle, text="Stop to Edit", command=self._toggle)
+        self._toggle_btn = ttk.Button(lifecycle, text="Stop All & Edit Config", command=self._toggle)
         self._toggle_btn.pack(side="left")
         self._status = ttk.Label(lifecycle, text="")
         self._status.pack(side="right")
@@ -245,15 +248,33 @@ class ServicesTab(ttk.Frame):
         for col in self.COLUMNS:
             self._tree.column(col, width=90, anchor="center")
         self._tree.pack(fill="both", expand=True)
+        self._tree.bind("<<TreeviewSelect>>", lambda _e: self._update_service_controls())
 
-        buttons = ttk.Frame(view)
-        buttons.pack(fill="x", pady=(6, 0))
-        self._start_btn = ttk.Button(buttons, text="Start", command=lambda: self._act("start_service"))
-        self._stop_btn = ttk.Button(buttons, text="Stop", command=lambda: self._act("stop_service"))
-        self._restart_btn = ttk.Button(buttons, text="Restart", command=lambda: self._act("restart_service"))
+        # Per-service controls, clearly scoped to the selected row (vs. the
+        # whole-app "Stop All & Edit Config" button at the top).
+        self._sel_frame = ttk.LabelFrame(view, text="Selected service", padding=(8, 4))
+        self._sel_frame.pack(fill="x", pady=(6, 0))
+        self._start_btn = ttk.Button(self._sel_frame, text="Start", command=lambda: self._act("start_service"))
+        self._stop_btn = ttk.Button(self._sel_frame, text="Stop", command=lambda: self._act("stop_service"))
+        self._restart_btn = ttk.Button(self._sel_frame, text="Restart", command=lambda: self._act("restart_service"))
         for btn in (self._start_btn, self._stop_btn, self._restart_btn):
             btn.pack(side="left", padx=(0, 6))
         return view
+
+    def _update_service_controls(self) -> None:
+        """Enable per-service buttons only for a selected, controllable row,
+        and label the frame with what's selected."""
+        name = self._selected()
+        status = self._tree.set(name, "status") if name else ""
+        controllable = bool(name) and status in self._CONTROLLABLE
+        for btn in (self._start_btn, self._stop_btn, self._restart_btn):
+            btn.state(["!disabled"] if controllable else ["disabled"])
+        if not name:
+            self._sel_frame.config(text="Selected service — click a row to control it")
+        elif controllable:
+            self._sel_frame.config(text=f"Selected service: {name}")
+        else:
+            self._sel_frame.config(text=f"Selected service: {name} ({status} — not controllable)")
 
     def _build_edit_view(self, parent: tk.Misc) -> ttk.Frame:
         view = ttk.Frame(parent)
@@ -277,7 +298,7 @@ class ServicesTab(ttk.Frame):
         if running:
             self._edit_view.pack_forget()
             self._service_view.pack(fill="both", expand=True)
-            self._toggle_btn.config(text="Stop to Edit")
+            self._toggle_btn.config(text="Stop All & Edit Config")
             self._banner.config(text="")
         else:
             self._service_view.pack_forget()
@@ -294,22 +315,8 @@ class ServicesTab(ttk.Frame):
             self._mode = running
 
         if running:
-            sm = self._app.service_manager
-            active = sm is not None
-            for btn in (self._start_btn, self._stop_btn, self._restart_btn):
-                btn.state(["!disabled"] if active else ["disabled"])
-            self._tree.delete(*self._tree.get_children())
-            if sm is not None:
-                for svc in sm.get_status():
-                    self._tree.insert(
-                        "", "end", text=str(svc["name"]),
-                        values=(
-                            svc["status"],
-                            svc["pid"] if svc["pid"] is not None else "-",
-                            svc["restart_count"],
-                            svc["exit_code"] if svc["exit_code"] is not None else "-",
-                        ),
-                    )
+            self._sync_tree(self._app.service_manager)
+            self._update_service_controls()
         else:
             self._text.config(state="normal")
             for btn in (self._validate_btn, self._save_btn):
@@ -318,11 +325,32 @@ class ServicesTab(ttk.Frame):
         if reschedule:
             self.after(_POLL_MS, self.refresh)
 
+    def _sync_tree(self, sm: ServiceManager | None) -> None:
+        """Update tree rows in place (keyed by service name) so the user's
+        selection survives the periodic refresh instead of being cleared."""
+        wanted: dict[str, tuple[object, ...]] = {}
+        if sm is not None:
+            for svc in sm.get_status():
+                wanted[str(svc["name"])] = (
+                    svc["status"],
+                    svc["pid"] if svc["pid"] is not None else "-",
+                    svc["restart_count"],
+                    svc["exit_code"] if svc["exit_code"] is not None else "-",
+                )
+        for iid in self._tree.get_children():
+            if iid not in wanted:
+                self._tree.delete(iid)
+        for name, values in wanted.items():
+            if self._tree.exists(name):
+                self._tree.item(name, values=values)
+            else:
+                self._tree.insert("", "end", iid=name, text=name, values=values)
+
     # --- service view actions -------------------------------------------------
 
     def _selected(self) -> str | None:
         sel = self._tree.selection()
-        return self._tree.item(sel[0], "text") if sel else None
+        return sel[0] if sel else None
 
     def _act(self, method: str) -> None:
         sm = self._app.service_manager
