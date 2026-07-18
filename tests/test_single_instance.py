@@ -8,7 +8,6 @@ import pytest
 from local_dev_proxy import gui
 from local_dev_proxy.config import (
     AlreadyRunningError,
-    ProjectPaths,
     acquire_instance_lock,
     get_paths,
     release_instance_lock,
@@ -26,24 +25,17 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def test_instance_lock_is_scoped_to_the_config_profile(tmp_path: Path) -> None:
     first_paths = get_paths(tmp_path / "first-profile")
     second_paths = get_paths(tmp_path / "second-profile")
-    alternate_file_paths = ProjectPaths(
-        config_dir=first_paths.config_dir,
-        services_file=first_paths.config_dir / "alternate.toml",
-        logs_dir=first_paths.logs_dir,
-    )
-    first_paths.config_dir.mkdir(parents=True)
-    second_paths.config_dir.mkdir(parents=True)
+    first_paths.root.mkdir(parents=True)
+    second_paths.root.mkdir(parents=True)
 
     first = acquire_instance_lock(first_paths)
     second = acquire_instance_lock(second_paths)
-    alternate = acquire_instance_lock(alternate_file_paths)
     try:
         with pytest.raises(AlreadyRunningError, match="already running"):
             acquire_instance_lock(first_paths)
         with pytest.raises(AlreadyRunningError, match="already running"):
             acquire_instance_lock(second_paths)
     finally:
-        release_instance_lock(alternate)
         release_instance_lock(second)
         release_instance_lock(first)
 
@@ -83,14 +75,14 @@ def test_run_gui_activates_existing_instance_without_starting_another(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     paths = get_paths(tmp_path / "existing-profile")
-    paths.config_dir.mkdir(parents=True)
+    paths.root.mkdir(parents=True)
     activated: list[object] = []
 
     def already_running(_paths: object) -> object:
         raise AlreadyRunningError("already running")
 
     monkeypatch.setattr(gui, "ensure_config", lambda _paths: paths)
-    monkeypatch.setattr(gui, "dock_icon_path", lambda _config_dir: None)
+    monkeypatch.setattr(gui, "dock_icon_path", lambda _paths: None)
     monkeypatch.setattr(gui, "acquire_instance_lock", already_running)
     monkeypatch.setattr(
         gui,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
@@ -24,19 +23,28 @@ _DOCK_ICON_RESOURCE = "assets/dock-icon.png"
 
 @dataclass(frozen=True)
 class ProjectPaths:
-    config_dir: Path
-    services_file: Path
-    logs_dir: Path
+    """All application paths derived from one canonical profile root."""
+
+    root: Path
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "root", self.root.expanduser().resolve())
+
+    @property
+    def services_file(self) -> Path:
+        return self.root / "services.toml"
+
+    @property
+    def logs_dir(self) -> Path:
+        return self.root / "logs"
+
+    @property
+    def instance_lock(self) -> Path:
+        return self.root / ".instance.lock"
 
 
 class AlreadyRunningError(RuntimeError):
     """Raised when the single-instance lock is already held by another manager."""
-
-
-def profile_key(paths: ProjectPaths) -> str:
-    """Return a stable identity for one independently runnable config file."""
-    config_identity = os.path.normcase(str(paths.services_file.resolve()))
-    return hashlib.sha256(os.fsencode(config_identity)).hexdigest()[:20]
 
 
 def acquire_instance_lock(paths: ProjectPaths) -> FileLock:
@@ -47,7 +55,7 @@ def acquire_instance_lock(paths: ProjectPaths) -> FileLock:
 
     Raises :class:`AlreadyRunningError` if another manager already holds it.
     """
-    lock = FileLock(paths.config_dir / f".instance-{profile_key(paths)}.lock")
+    lock = FileLock(paths.instance_lock)
     try:
         lock.acquire(timeout=0)
     except Timeout as exc:
@@ -87,14 +95,9 @@ def user_config_dir() -> Path:
     return Path(location).expanduser().resolve()
 
 
-def get_paths(config_dir: Path | None = None) -> ProjectPaths:
+def get_paths(config_root: Path | None = None) -> ProjectPaths:
     """Resolve all runtime paths, optionally for an isolated config profile."""
-    root = (config_dir or user_config_dir()).expanduser().resolve()
-    return ProjectPaths(
-        config_dir=root,
-        services_file=root / "services.toml",
-        logs_dir=root / "logs",
-    )
+    return ProjectPaths(config_root or user_config_dir())
 
 
 def bundled_resource(name: str) -> Traversable:
@@ -112,7 +115,7 @@ def ensure_config(paths: ProjectPaths | None = None) -> ProjectPaths:
     platform config directory. The operation is idempotent.
     """
     resolved = paths or get_paths()
-    resolved.config_dir.mkdir(parents=True, exist_ok=True)
+    resolved.root.mkdir(parents=True, exist_ok=True)
     resolved.logs_dir.mkdir(parents=True, exist_ok=True)
 
     if not resolved.services_file.exists():
@@ -126,7 +129,7 @@ def ensure_config(paths: ProjectPaths | None = None) -> ProjectPaths:
 def _cached_icon(
     resource_name: str,
     cache_name: str,
-    config_dir: Path | None = None,
+    paths: ProjectPaths | None = None,
 ) -> Path | None:
     """Copy a bundled icon into the config dir and return its path, or None.
 
@@ -137,7 +140,7 @@ def _cached_icon(
     if not resource.is_file():
         return None
 
-    cache = (config_dir or user_config_dir()) / cache_name
+    cache = (paths or get_paths()).root / cache_name
     try:
         cache.parent.mkdir(parents=True, exist_ok=True)
         with resources.as_file(resource) as src:
@@ -147,20 +150,20 @@ def _cached_icon(
     return cache
 
 
-def icon_path(config_dir: Path | None = None) -> Path | None:
+def icon_path(paths: ProjectPaths | None = None) -> Path | None:
     """Return a filesystem path to the bundled system-tray icon, or None."""
     if sys.platform == "darwin":
         return _cached_icon(
             _MACOS_ICON_RESOURCE,
             "tray-icon-macos.png",
-            config_dir,
+            paths,
         )
-    return _cached_icon(_ICON_RESOURCE, "tray-icon.png", config_dir)
+    return _cached_icon(_ICON_RESOURCE, "tray-icon.png", paths)
 
 
-def dock_icon_path(config_dir: Path | None = None) -> Path | None:
+def dock_icon_path(paths: ProjectPaths | None = None) -> Path | None:
     """Return a filesystem path to the bundled Dock icon, or None."""
-    return _cached_icon(_DOCK_ICON_RESOURCE, "dock-icon.png", config_dir)
+    return _cached_icon(_DOCK_ICON_RESOURCE, "dock-icon.png", paths)
 
 
 def require_port(env: Mapping[str, str], key: str) -> int:

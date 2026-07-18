@@ -93,7 +93,9 @@ directory beside it.
 For an isolated development or test profile, set
 `LOCAL_DEV_PROXY_CONFIG_DIR=/path/to/profile`. The selected profile controls the
 configuration, logs, cached icons, single-instance lock, and application activation
-channel, so it does not touch or contend with the normal profile.
+channel. This directory is the single profile root; every application path is derived
+from it, so paths cannot be configured into inconsistent combinations and the profile
+does not touch or contend with the normal profile.
 `http_port` and `bind` are required, values are type-checked without coercion, and
 unknown keys are rejected rather than silently treated as an older config shape.
 

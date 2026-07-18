@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 import time
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
-from .config import ProjectPaths, profile_key
+from .config import ProjectPaths
 
 
 def instance_server_name(paths: ProjectPaths) -> str:
     """Return a stable, profile-specific local IPC server name."""
-    return f"local-dev-proxy-{profile_key(paths)}"
+    root = os.path.normcase(str(paths.root))
+    digest = hashlib.sha256(os.fsencode(root)).hexdigest()[:20]
+    return f"local-dev-proxy-{digest}"
 
 
 def activate_running_instance(paths: ProjectPaths, timeout_ms: int = 1500) -> bool:

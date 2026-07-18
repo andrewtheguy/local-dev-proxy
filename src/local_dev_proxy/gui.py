@@ -807,8 +807,8 @@ class ManagerController:
         self._loaded_config = ""
         self._shutdown_flag = threading.Event()
 
-        self.window = ManagerWindow(_icon(dock_icon_path(paths.config_dir)))
-        self.tray = QSystemTrayIcon(_icon(icon_path(paths.config_dir)), self.window)
+        self.window = ManagerWindow(_icon(dock_icon_path(paths)))
+        self.tray = QSystemTrayIcon(_icon(icon_path(paths)), self.window)
         self.tray.setObjectName("system_tray")
         self.tray.setToolTip("Local Dev Proxy")
         self.tray_menu = QMenu()
@@ -1357,7 +1357,7 @@ def run_gui(paths: ProjectPaths | None = None) -> int:
     app.setApplicationVersion(__version__)
 
     resolved = ensure_config(paths)
-    app.setWindowIcon(_icon(dock_icon_path(resolved.config_dir)))
+    app.setWindowIcon(_icon(dock_icon_path(resolved)))
 
     try:
         lock = acquire_instance_lock(resolved)
