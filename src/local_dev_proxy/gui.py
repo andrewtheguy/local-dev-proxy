@@ -380,7 +380,7 @@ class ConfigTab(ttk.Frame):
             for btn in (self._validate_btn, self._save_btn):
                 btn.state(["disabled"])
         else:
-            self._banner.config(text="Services are stopped — edit, Save, then Start to apply.")
+            self._banner.config(text="Services are stopped — edit, then Start to apply (Start also saves).")
             self._text.config(state="normal")
             self._stop_btn.state(["disabled"])
             self._start_btn.state(["!disabled"])
@@ -395,13 +395,16 @@ class ConfigTab(ttk.Frame):
         self.refresh()
 
     def _start(self) -> None:
+        # Persist the editor buffer first so Start always applies what's on screen.
+        if not self._persist():
+            return
         self._status.config(text="starting…")
         try:
             self._app.start_services()
         except Exception as exc:  # config may be invalid at start time
             self._status.config(text=f"start failed: {exc}", foreground="#b00")
             return
-        self._status.config(text="started ✓", foreground="#070")
+        self._status.config(text="saved & started ✓", foreground="#070")
         self.refresh()
 
     def _validate(self) -> bool:
@@ -415,19 +418,24 @@ class ConfigTab(ttk.Frame):
         self._status.config(text="valid ✓", foreground="#070")
         return True
 
-    def _save(self) -> None:
+    def _persist(self) -> bool:
+        """Validate the editor buffer and write it to disk. Returns True on success."""
         if self._app.running:
             self._status.config(text="stop services first", foreground="#b00")
-            return
+            return False
         if not self._validate():
-            return
+            return False
         text = self._text.get("1.0", "end-1c")
         try:
             self._app.paths.services_file.write_text(text)
         except OSError as exc:
             self._status.config(text=f"write error: {exc}", foreground="#b00")
-            return
-        self._status.config(text="saved ✓", foreground="#070")
+            return False
+        return True
+
+    def _save(self) -> None:
+        if self._persist():
+            self._status.config(text="saved ✓", foreground="#070")
 
 
 def run_gui() -> None:
