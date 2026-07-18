@@ -81,7 +81,7 @@ def test_run_gui_activates_existing_instance_without_starting_another(
     def already_running(_paths: object) -> object:
         raise AlreadyRunningError("already running")
 
-    monkeypatch.setattr(gui, "ensure_config", lambda _paths: paths)
+    monkeypatch.setattr(gui, "ensure_profile", lambda _paths: paths)
     monkeypatch.setattr(gui, "dock_icon_path", lambda _paths: None)
     monkeypatch.setattr(gui, "acquire_instance_lock", already_running)
     monkeypatch.setattr(

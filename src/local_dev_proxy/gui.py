@@ -78,7 +78,7 @@ from .config import (
     acquire_instance_lock,
     configure_application_identity,
     dock_icon_path,
-    ensure_config,
+    ensure_profile,
     icon_path,
     release_instance_lock,
 )
@@ -958,10 +958,17 @@ class ManagerController:
                 "Viewing configuration (read-only) — services are still running."
             )
         else:
-            self._load_file()
-            self._mode_banner = (
-                "Editing configuration — Start All validates, saves, and launches it."
-            )
+            config_exists = self._load_file()
+            if config_exists:
+                self._mode_banner = (
+                    "Editing configuration — Start All validates, saves, and "
+                    "launches it."
+                )
+            else:
+                self._mode_banner = (
+                    "No services.toml exists yet. Enter a configuration, then Save "
+                    "or Start All to create it."
+                )
         self.window.set_service_mode(view)
         self._set_banner(self._mode_banner)
 
@@ -1117,22 +1124,31 @@ class ManagerController:
 
     # --- config editor --------------------------------------------------------
 
-    def _load_file(self) -> None:
+    def _load_file(self) -> bool:
         try:
             content = self.paths.services_file.read_text()
+        except FileNotFoundError:
+            content = ""
+            config_exists = False
+            self._set_status("new configuration")
         except OSError as exc:
             content = ""
+            config_exists = False
             self._set_status(f"read error: {exc}", _ERROR)
+        else:
+            config_exists = True
         with QSignalBlocker(self.window.config_editor):
             self.window.config_editor.setPlainText(content)
         self.window.readonly_config.setPlainText(content)
         self._loaded_config = content
         self.window.set_dirty(False)
+        return config_exists
 
     def _reload(self) -> None:
-        self._load_file()
+        config_exists = self._load_file()
         self._set_banner(self._mode_banner)
-        self._set_status("reloaded from disk")
+        if config_exists:
+            self._set_status("reloaded from disk")
 
     def _on_config_edited(self) -> None:
         dirty = self.window.config_editor.toPlainText() != self._loaded_config
@@ -1318,10 +1334,11 @@ def _run_gui(
     try:
         controller = ManagerController(paths, application=app)
         activation_server.activated.connect(controller.show_window)
-        try:
-            controller.start_services()
-        except Exception as exc:  # noqa: BLE001 - bad config opens in editor mode
-            logger.error("Startup failed; services left stopped: %s", exc)
+        if paths.services_file.exists():
+            try:
+                controller.start_services()
+            except Exception as exc:  # noqa: BLE001 - bad config opens in editor mode
+                logger.error("Startup failed; services left stopped: %s", exc)
 
         controller.prime()
         tray_available = QSystemTrayIcon.isSystemTrayAvailable()
@@ -1356,7 +1373,7 @@ def run_gui(paths: ProjectPaths | None = None) -> int:
     app.setApplicationDisplayName("Local Dev Proxy")
     app.setApplicationVersion(__version__)
 
-    resolved = ensure_config(paths)
+    resolved = ensure_profile(paths)
     app.setWindowIcon(_icon(dock_icon_path(resolved)))
 
     try:

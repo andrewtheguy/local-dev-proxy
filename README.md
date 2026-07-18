@@ -102,10 +102,15 @@ directory:
 | Windows | `%APPDATA%\andrewtheguy\local-dev-proxy\` |
 | Linux | `$XDG_CONFIG_HOME/andrewtheguy/local-dev-proxy/` (or `~/.config/...`) |
 
-On first run, `services.toml` is created there automatically from the bundled sample.
-It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and routes.
-Route targets can be TCP ports or Unix domain sockets. Logs are written in the `logs/`
-directory beside it.
+The application does not create or seed `services.toml`. On first run it opens the
+configuration editor empty and remains stopped until you enter and save a valid
+configuration. The bundled `src/local_dev_proxy/services.toml.sample` is reference
+material only; it is never copied into the user profile and is not intended to run
+unchanged.
+
+`services.toml` holds proxy settings (`http_port`, `bind`), service commands,
+environment values, ports, and routes. Route targets can be TCP ports or Unix domain
+sockets. Logs are written in the `logs/` directory beside it.
 
 For an isolated development or test profile, set
 `LOCAL_DEV_PROXY_CONFIG_DIR=/path/to/profile`. The selected profile controls the
@@ -170,11 +175,15 @@ A window with three tabs:
 - **No system tray available** → closing the manager window quits cleanly so the
   application cannot become invisible and unreachable.
 
-## How to add a service
+## How to configure services
 
-Add a section to `services.toml` (command, port, and route together):
+A new configuration must define the proxy listener and at least one service. For
+example:
 
 ```toml
+http_port = 2800
+bind = ["127.0.0.1", "::1"]
+
 [services.myservice]
 command = ["myservice", "--port", "{MYSERVICE_PORT}"]
 env = {MYSERVICE_PORT = "18200"}
@@ -234,7 +243,10 @@ To turn a service off without deleting its config, add `disabled = true` to its
 excluded from the proxy and the portal — it still appears in the **Services** list with a
 `disabled` status. Remove the line (or set it to `false`) to re-enable it.
 
-The bundled defaults live in `src/local_dev_proxy/services.toml.sample`.
+The bundled reference at `src/local_dev_proxy/services.toml.sample` demonstrates
+managed and externally managed processes, all TCP and Unix-socket target forms,
+multiple and wildcard hosts, inherited environment values, route-free workers, and
+disabled services. Copy and adapt only the relevant sections.
 
 ## Troubleshooting
 

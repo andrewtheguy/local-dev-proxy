@@ -15,7 +15,6 @@ from PySide6.QtCore import QCoreApplication, QStandardPaths
 _APP_NAME = "local-dev-proxy"
 _ORGANIZATION_NAME = "andrewtheguy"
 _ORGANIZATION_DOMAIN = "andrewtheguy.com"
-_SAMPLE_RESOURCE = "services.toml.sample"
 _ICON_RESOURCE = "assets/tray-icon.png"
 _MACOS_ICON_RESOURCE = "assets/tray-icon-macos.png"
 _DOCK_ICON_RESOURCE = "assets/dock-icon.png"
@@ -108,8 +107,8 @@ def bundled_resource(name: str) -> Traversable:
     return resource
 
 
-def ensure_config(paths: ProjectPaths | None = None) -> ProjectPaths:
-    """Create the config/log dirs and seed services.toml from the sample.
+def ensure_profile(paths: ProjectPaths | None = None) -> ProjectPaths:
+    """Create the profile and log directories without creating configuration.
 
     Passing paths makes startup and tests independent of the user's real
     platform config directory. The operation is idempotent.
@@ -117,12 +116,6 @@ def ensure_config(paths: ProjectPaths | None = None) -> ProjectPaths:
     resolved = paths or get_paths()
     resolved.root.mkdir(parents=True, exist_ok=True)
     resolved.logs_dir.mkdir(parents=True, exist_ok=True)
-
-    if not resolved.services_file.exists():
-        sample = bundled_resource(_SAMPLE_RESOURCE)
-        with resources.as_file(sample) as sample_path:
-            shutil.copyfile(sample_path, resolved.services_file)
-
     return resolved
 
 

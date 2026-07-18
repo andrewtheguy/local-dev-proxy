@@ -59,25 +59,19 @@ def test_bundled_sample_covers_supported_service_and_target_forms() -> None:
     manifest = load_routes(SAMPLE_MANIFEST)
     services = manifest.services
 
-    assert services["minio"].command is not None
-    assert services["vite"].command is None
-    assert services["fixed_socket_example"].disabled
-    assert services["worker_example"].disabled
-    assert services["worker_example"].routes == []
+    assert services["api"].command is not None
+    assert services["frontend"].command is None
+    assert services["external_socket"].command is None
+    assert services["optional_service"].disabled
+    assert services["worker"].routes == []
 
-    env_only_socket = services["env_only_socket_example"]
-    assert env_only_socket.disabled
-    assert env_only_socket.env == {"EXAMPLE_APP_SOCKET": "env-only-example.sock"}
-    assert env_only_socket.command == ["placeholder-env-aware-http-server"]
-    assert env_only_socket.routes[0].target_socket_env == "EXAMPLE_APP_SOCKET"
+    socket_app = services["socket_app"]
+    assert socket_app.env == {"APP_SOCKET": "run/my-socket-app.sock"}
+    assert socket_app.routes[0].target_socket_env == "APP_SOCKET"
 
-    inherited_env_socket = services["inherited_env_socket_example"]
-    assert inherited_env_socket.disabled
-    assert inherited_env_socket.env == {}
-    assert inherited_env_socket.command == ["placeholder-env-aware-http-server"]
-    assert (
-        inherited_env_socket.routes[0].target_socket_env == "INHERITED_APP_SOCKET"
-    )
+    inherited_environment = services["inherited_environment"]
+    assert inherited_environment.env == {}
+    assert inherited_environment.routes[0].target_port_env == "INHERITED_PORT"
 
     target_forms: set[str] = set()
     port_target_hosts: set[str | None] = set()

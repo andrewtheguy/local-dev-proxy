@@ -237,6 +237,27 @@ def test_window_closes_normally_when_no_tray_is_available(qtbot: object) -> None
     assert not window.isVisible()
 
 
+def test_missing_config_opens_an_empty_new_configuration_editor(
+    qtbot: object,
+    tmp_path: Path,
+) -> None:
+    paths = ProjectPaths(tmp_path / "new-profile")
+    controller = ManagerController(paths, application=QApplication.instance())
+    qtbot.addWidget(controller.window)
+    try:
+        controller.prime()
+
+        assert not paths.services_file.exists()
+        assert controller.window.services_stack.currentWidget() is (
+            controller.window.editor_view
+        )
+        assert controller.window.config_editor.toPlainText() == ""
+        assert controller.window.status_label.text() == "new configuration"
+        assert "No services.toml exists yet" in controller.window.services_banner.text()
+    finally:
+        controller.quit()
+
+
 def test_macos_tray_icon_is_white_with_identical_alpha_mask() -> None:
     original = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"))
     macos = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon-macos.png"))

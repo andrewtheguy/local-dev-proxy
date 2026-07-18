@@ -1,137 +1,81 @@
-# Required proxy settings. The proxy listens on every address in `bind` using
-# `http_port`; service routes below select the upstream from the request host.
+# Reference configuration for local-dev-proxy.
+#
+# This file is not copied into the user profile and is not expected to run
+# unchanged. Copy only the sections that match your services, then replace the
+# example commands, ports, socket paths, and hostnames.
+
+# The proxy listens on each address in `bind` at `http_port`.
 http_port = 2800
 bind = ["127.0.0.1", "::1"]
 
-# Service forms:
-# - `command` present: managed process, started and stopped by local-dev-proxy.
-# - `command` omitted: unmanaged route to a process started elsewhere.
-# - `disabled = true`: process and routes are inactive but remain in the config.
-# - `env` is optional. Its string values are passed to managed processes whether
-#   or not they are referenced by `{ENV_NAME}` placeholders in command args.
-# - Managed processes also inherit the OS environment of local-dev-proxy, so a
-#   variable can be omitted from `env` when it is exported before launch.
-# - `routes` is optional, so a managed process does not have to be proxied.
-#
-# Every route requires `id` and a non-empty `hosts` list. Exact and wildcard
-# hosts can be combined, as the MinIO route demonstrates.
-#
-# Set exactly one upstream target on each route:
-# - `target_port = 3000`                     fixed TCP port
-# - `target_port_env = "APP_PORT"`           TCP port read from service/OS env
-# - `target_socket = "app.sock"`             fixed Unix socket path
-# - `target_socket_env = "APP_SOCKET"`       socket path read from service/OS env
-#
-# TCP routes may set `target_host` to `localhost`, `127.0.0.1`, or `::1`; it
-# defaults to `localhost`. Unix-socket routes must not set `target_host`.
-# Relative socket paths are resolved from the directory containing this file,
-# which is also the working directory used for managed commands.
+# Managed TCP service. Values in `env` are strings and are passed to the child
+# process. `{API_PORT}` placeholders are expanded in command arguments.
+[services.api]
+command = ["my-api", "serve", "--host", "127.0.0.1", "--port", "{API_PORT}"]
+env = {API_PORT = "8000", APP_ENV = "development"}
 
-# Managed service + environment-resolved TCP ports + explicit target host.
-# This also demonstrates multiple routes and exact/wildcard host patterns.
-[services.minio]
-command = ["minio", "server", "data", "--address", ":{MINIO_PORT}", "--console-address", ":{MINIO_CONSOLE_PORT}"]
-env = {MINIO_BROWSER_REDIRECT = "off", MINIO_PORT = "19000", MINIO_CONSOLE_PORT = "19001"}
-
-[[services.minio.routes]]
-id = "minio"
-hosts = ["minios3.localhost", "*.minios3.localhost"]
+# A service can expose several routes. Hosts may be exact names or wildcards.
+[[services.api.routes]]
+id = "api"
+hosts = ["api.localhost", "*.api.localhost"]
 target_host = "127.0.0.1"
-target_port_env = "MINIO_PORT"
+target_port_env = "API_PORT"
 
-[[services.minio.routes]]
-id = "minioconsole"
-hosts = ["minioconsole.localhost"]
+[[services.api.routes]]
+id = "api-admin"
+hosts = ["admin.api.localhost"]
 target_host = "127.0.0.1"
-target_port_env = "MINIO_CONSOLE_PORT"
+target_port = 8001
 
-# Managed service + environment-resolved Unix socket. To use the fixed socket
-# form instead, replace `target_socket_env` with `target_socket = "s3browser.sock"`.
-[services.s3browser]
-command = ["s3browser", "server", "--bind", "unix:{S3BROWSER_SOCKET}"]
-env = {S3BROWSER_SOCKET = "s3browser.sock"}
+# Unmanaged TCP service. Omitting `command` means another tool owns the process.
+# `target_host` defaults to `localhost` when it is omitted.
+[services.frontend]
 
-[[services.s3browser.routes]]
-id = "s3browser"
-hosts = ["s3browser.localhost"]
-target_socket_env = "S3BROWSER_SOCKET"
-
-# Managed + config-defined Unix-socket environment passthrough. The placeholder
-# server is expected to read EXAMPLE_APP_SOCKET from its environment; the
-# variable does not need to appear in `command`. The route reads the same value
-# to locate the socket. Replace the command, then remove `disabled` to use it.
-[services.env_only_socket_example]
-command = ["placeholder-env-aware-http-server"]
-env = {EXAMPLE_APP_SOCKET = "env-only-example.sock"}
-disabled = true
-
-[[services.env_only_socket_example.routes]]
-id = "env-only-socket-example"
-hosts = ["env-only-socket-example.localhost"]
-target_socket_env = "EXAMPLE_APP_SOCKET"
-
-# Managed + OS-inherited Unix-socket environment passthrough. Before launching
-# local-dev-proxy, export INHERITED_APP_SOCKET with the path the replacement
-# server will read. It is intentionally absent from both `env` and `command`;
-# the managed process inherits it and the route resolves it from the OS env.
-# Replace the command, export the variable, and remove `disabled` to use it.
-[services.inherited_env_socket_example]
-command = ["placeholder-env-aware-http-server"]
-disabled = true
-
-[[services.inherited_env_socket_example.routes]]
-id = "inherited-env-socket-example"
-hosts = ["inherited-env-socket-example.localhost"]
-target_socket_env = "INHERITED_APP_SOCKET"
-
-# Managed service + environment-resolved TCP port. Uncomment `disabled` to
-# demonstrate the disabled state; its process and routes will then be skipped.
-[services.minisearch]
-command = ["minisearch", "serve", "--profile", "nas-server", "--bind", "127.0.0.1:{MINISEARCH_PORT}"]
-env = {MINISEARCH_PORT = "52378"}
-# disabled = true
-
-[[services.minisearch.routes]]
-id = "minisearch"
-hosts = ["nas-server.minisearch.localhost"]
-target_host = "127.0.0.1"
-target_port_env = "MINISEARCH_PORT"
-
-# Unmanaged service + fixed TCP port + default target host (`localhost`).
-[services.vite]
-
-[[services.vite.routes]]
-id = "vite"
-hosts = ["vite.localhost"]
+[[services.frontend.routes]]
+id = "frontend"
+hosts = ["frontend.localhost"]
 target_port = 5173
 
-# Managed + fixed Unix-socket variant using a placeholder program. It is
-# disabled so the bundled defaults never try to start the placeholder or expose
-# its route. Replace the command, then remove `disabled` to use it.
-[services.fixed_socket_example]
-command = ["placeholder-http-server", "--unix-socket", "fixed-example.sock"]
-disabled = true
+# Managed Unix-socket service with a socket path defined in this configuration.
+[services.socket_app]
+command = ["my-socket-app", "--socket", "{APP_SOCKET}"]
+env = {APP_SOCKET = "run/my-socket-app.sock"}
 
-[[services.fixed_socket_example.routes]]
-id = "fixed-socket-example"
-hosts = ["fixed-socket-example.localhost"]
-target_socket = "fixed-example.sock"
+[[services.socket_app.routes]]
+id = "socket-app"
+hosts = ["socket-app.localhost"]
+target_socket_env = "APP_SOCKET"
 
-# Managed worker with no routes. This demonstrates that process management does
-# not require proxy exposure. Replace the placeholder command and remove
-# `disabled` to use it.
-[services.worker_example]
-command = ["placeholder-worker"]
-disabled = true
+# Unmanaged service at a fixed Unix-socket path.
+[services.external_socket]
 
-# Managed + fixed TCP port + explicit IPv6 loopback target. It is disabled for
-# the same reason as the other placeholder examples.
-[services.ipv6_example]
-command = ["placeholder-http-server", "--host", "::1", "--port", "18080"]
-disabled = true
+[[services.external_socket.routes]]
+id = "external-socket"
+hosts = ["external-socket.localhost"]
+target_socket = "/tmp/external-http.sock"
 
-[[services.ipv6_example.routes]]
-id = "ipv6-example"
-hosts = ["ipv6-example.localhost"]
+# The manager process's OS environment is inherited by managed services and can
+# also supply a route target. Export INHERITED_PORT before starting the manager.
+[services.inherited_environment]
+command = ["my-inherited-env-app"]
+
+[[services.inherited_environment.routes]]
+id = "inherited-environment"
+hosts = ["inherited.localhost"]
 target_host = "::1"
-target_port = 18080
+target_port_env = "INHERITED_PORT"
+
+# Managed processes do not need proxy routes.
+[services.worker]
+command = ["my-worker", "run"]
+env = {QUEUE = "development"}
+
+# Keep optional configuration visible without starting its process or routes.
+[services.optional_service]
+command = ["my-optional-service", "--port", "9000"]
+disabled = true
+
+[[services.optional_service.routes]]
+id = "optional-service"
+hosts = ["optional.localhost"]
+target_port = 9000
