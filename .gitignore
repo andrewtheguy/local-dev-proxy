@@ -9,3 +9,5 @@ tmp/
 build/
 dist/
 *.egg-info/
+# dmgbuild config written to CWD by `cxfreeze bdist_dmg`
+/settings.py

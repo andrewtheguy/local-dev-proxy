@@ -1,7 +1,7 @@
-"""Frozen-app entry point for the cx_Freeze Windows build.
+"""Frozen-app entry point for the cx_Freeze builds (Windows MSI and macOS app).
 
 cx_Freeze freezes a real script file rather than a console/gui-script entry
-point, so this module mirrors ``local_dev_proxy.__main__`` for the packaged MSI.
+point, so this module mirrors ``local_dev_proxy.__main__`` for the packaged apps.
 """
 
 from local_dev_proxy.gui import run_gui

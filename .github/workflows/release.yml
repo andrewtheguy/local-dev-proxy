@@ -96,28 +96,16 @@ jobs:
       - name: Verify ARM64 runner
         run: test "$(uname -m)" = "arm64"
 
-      - name: Create macOS app bundle
-        run: uvx --from briefcase==0.4.4 briefcase create macOS app --no-input
-
-      - name: Build macOS app bundle
-        run: uvx --from briefcase==0.4.4 briefcase build macOS app --no-input
-
+      # cx_Freeze builds an unsigned .app and wraps it in a DMG (via dmgbuild),
+      # so no Apple signing certificate is required. Freeze against the lean
+      # runtime deps (PySide6-Essentials) plus the packaging group only.
       - name: Package macOS app as unsigned DMG
-        # Briefcase's package command requires either an Apple distribution
-        # certificate or an ad-hoc signature that it marks as non-distributable.
-        # The build step already produced the .app, so wrap it directly in a DMG.
+        run: uv run --no-default-groups --group packaging cxfreeze bdist_dmg
+
+      - name: Rename DMG to release asset name
         run: |
-          mkdir -p dist/dmg-root
-          ditto \
-            "build/local-dev-proxy/macos/app/Local Dev Proxy.app" \
-            "dist/dmg-root/Local Dev Proxy.app"
-          ln -s /Applications "dist/dmg-root/Applications"
-          hdiutil create \
-            -volname "Local Dev Proxy" \
-            -srcfolder dist/dmg-root \
-            -format UDZO \
-            -ov \
-            dist/local-dev-proxy-macos-arm64.dmg
+          mkdir -p dist
+          mv "build/Local Dev Proxy.dmg" dist/local-dev-proxy-macos-arm64.dmg
 
       - name: Upload macOS app artifact
         uses: actions/upload-artifact@v4

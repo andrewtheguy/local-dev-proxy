@@ -50,34 +50,15 @@ artifacts = [
   "src/local_dev_proxy/services.toml.sample",
 ]
 
-[tool.briefcase]
-project_name = "Local Dev Proxy"
-bundle = "com.andrewtheguy"
-
-[tool.briefcase.app.local-dev-proxy]
-formal_name = "Local Dev Proxy"
-description = "Local reverse proxy and development process manager."
-long_description = "Local development process orchestration with a built-in reverse proxy and manager UI."
-sources = ["src/local_dev_proxy"]
-icon = "src/local_dev_proxy/assets/dock-icon"
-cleanup_paths = [
-  "**/app_packages/PySide6/**/QtTest",
-  "**/app_packages/PySide6/**/QtTest.*",
-  "**/app_packages/PySide6/**/Qt6Test.*",
-  "**/app_packages/PySide6/**/qttest.*",
-]
-
-[tool.briefcase.app.local-dev-proxy.macOS]
-min_os_version = "13.0"
-universal_build = false
-
-# Windows packaging is handled by cx_Freeze (see packaging/windows_launcher.py),
-# which builds a native MSI without downloading the WiX toolset.
+# Both platforms are packaged by cx_Freeze (see packaging/launcher.py): a native
+# MSI on Windows (no WiX download) and a .app/DMG on macOS (no code signing).
 [[tool.cxfreeze.executables]]
-script = "packaging/windows_launcher.py"
+script = "packaging/launcher.py"
 base = "gui"
 target_name = "Local Dev Proxy"
-icon = "src/local_dev_proxy/assets/dock-icon.ico"
+# Suffix-less: cx_Freeze resolves dock-icon.ico on Windows and dock-icon.icns
+# on macOS (the latter is used as the DMG volume icon).
+icon = "src/local_dev_proxy/assets/dock-icon"
 shortcut_name = "Local Dev Proxy"
 shortcut_dir = "ProgramMenuFolder"
 
@@ -96,6 +77,16 @@ upgrade_code = "{BF4C6AE3-061E-4BE0-9F69-66BE0C7E56F0}"
 add_to_path = false
 all_users = false
 install_icon = "src/local_dev_proxy/assets/dock-icon.ico"
+
+[tool.cxfreeze.bdist_mac]
+bundle_name = "Local Dev Proxy"
+iconfile = "src/local_dev_proxy/assets/dock-icon.icns"
+# plist_items in pyproject.toml can't express tuples, so ship a full plist.
+custom_info_plist = "packaging/Info.plist"
+
+[tool.cxfreeze.bdist_dmg]
+volume_label = "Local Dev Proxy"
+applications_shortcut = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
