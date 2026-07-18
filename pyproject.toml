@@ -35,6 +35,9 @@ dev = [
   "ruff>=0.14.6",
   "basedpyright>=1.29.0",
 ]
+packaging = [
+    "cx-freeze>=8.5.0",
+]
 
 [tool.uv]
 default-groups = ["dev"]
@@ -67,6 +70,32 @@ cleanup_paths = [
 [tool.briefcase.app.local-dev-proxy.macOS]
 min_os_version = "13.0"
 universal_build = false
+
+# Windows packaging is handled by cx_Freeze (see packaging/windows_launcher.py),
+# which builds a native MSI without downloading the WiX toolset.
+[[tool.cxfreeze.executables]]
+script = "packaging/windows_launcher.py"
+base = "gui"
+target_name = "Local Dev Proxy"
+icon = "src/local_dev_proxy/assets/dock-icon.ico"
+shortcut_name = "Local Dev Proxy"
+shortcut_dir = "ProgramMenuFolder"
+
+[tool.cxfreeze.build_exe]
+excludes = ["tkinter", "test", "unittest", "pydoc"]
+# local_dev_proxy stays unzipped so its bundled data files (assets/*,
+# services.toml.sample) are copied into lib/ and resolvable via
+# importlib.resources at runtime.
+zip_include_packages = ["*"]
+zip_exclude_packages = ["local_dev_proxy"]
+include_msvcr = true
+
+[tool.cxfreeze.bdist_msi]
+# Stable upgrade code so new versions replace the prior install in place.
+upgrade_code = "{BF4C6AE3-061E-4BE0-9F69-66BE0C7E56F0}"
+add_to_path = false
+all_users = false
+install_icon = "src/local_dev_proxy/assets/dock-icon.ico"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

@@ -141,18 +141,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Create Windows app
-        run: uvx --from briefcase==0.4.4 briefcase create windows app --no-input
-
-      - name: Build Windows app
-        run: uvx --from briefcase==0.4.4 briefcase build windows app --no-input
-
+      # cx_Freeze builds a native MSI via its bundled msilib backport, so no
+      # WiX toolset download is needed. Freeze against the lean runtime deps
+      # (PySide6-Essentials) plus the packaging group only.
       - name: Package Windows app as MSI
-        run: >-
-          uvx --from briefcase==0.4.4 briefcase package windows app
-          --packaging-format msi
-          --adhoc-sign
-          --no-input
+        run: uv run --no-default-groups --group packaging cxfreeze bdist_msi
 
       - name: Upload Windows MSI artifact
         uses: actions/upload-artifact@v4
