@@ -1,5 +1,32 @@
 Local dev proxy: built-in reverse proxy + process manager with a macOS menu bar app and a Tkinter manager UI.
 
+## Installation
+
+macOS only (the menu-bar item and manager UI rely on macOS/pyobjc).
+
+### Install from GitHub Pages package index (recommended)
+
+```shell
+uv tool install \
+  --extra-index-url https://andrewtheguy.github.io/local-dev-proxy/simple/ \
+  'local-dev-proxy==x.x.x'
+```
+
+Then run it with `local-dev-proxy`.
+
+### Install from source
+```shell
+uv tool install git+https://github.com/andrewtheguy/local-dev-proxy.git@(tag or branch)
+```
+
+### Run without installing
+```shell
+uv tool run --from git+https://github.com/andrewtheguy/local-dev-proxy.git@vx.x.x local-dev-proxy [command] [options]
+
+# Or from a local checkout
+uv run local-dev-proxy [command] [options]
+```
+
 ## What you get
 
 | URL | Service |
