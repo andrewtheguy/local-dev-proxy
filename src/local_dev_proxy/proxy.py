@@ -24,7 +24,11 @@ def _configure_logging() -> None:
     pkg_logger = logging.getLogger("local_dev_proxy")
     if not pkg_logger.handlers:
         handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"
+            )
+        )
         pkg_logger.addHandler(handler)
         pkg_logger.setLevel(logging.INFO)
 
@@ -38,7 +42,8 @@ class ResolvedRoute:
 
 
 def resolve_routes(
-    manifest: RoutesManifest, env: Mapping[str, str] | None = None,
+    manifest: RoutesManifest,
+    env: Mapping[str, str] | None = None,
 ) -> list[ResolvedRoute]:
     resolved: list[ResolvedRoute] = []
     seen_ports: dict[int, str] = {}
@@ -119,32 +124,39 @@ def _build_portal_html(manifest: RoutesManifest, routes: list[ResolvedRoute]) ->
             else:
                 url = f"http://{host}:{http_port}/"
                 items.append(
-                    f'<li><a href="{html.escape(url)}">'
-                    f"{html.escape(host)}</a></li>"
+                    f'<li><a href="{html.escape(url)}">{html.escape(host)}</a></li>'
                 )
 
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<title>Local Dev Proxy</title></head><body>"
-        "<h1>Local Dev Proxy</h1><ul>"
-        + "\n".join(items)
-        + "</ul></body></html>"
+        "<h1>Local Dev Proxy</h1><ul>" + "\n".join(items) + "</ul></body></html>"
     )
 
 
 # --- Proxy handler ---
 
-HOP_BY_HOP = frozenset({
-    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-    "te", "trailers", "transfer-encoding", "upgrade",
-})
+HOP_BY_HOP = frozenset(
+    {
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
 
-WEBSOCKET_HANDSHAKE_HEADERS = frozenset({
-    "sec-websocket-extensions",
-    "sec-websocket-key",
-    "sec-websocket-protocol",
-    "sec-websocket-version",
-})
+WEBSOCKET_HANDSHAKE_HEADERS = frozenset(
+    {
+        "sec-websocket-extensions",
+        "sec-websocket-key",
+        "sec-websocket-protocol",
+        "sec-websocket-version",
+    }
+)
 
 
 def _filter_headers(headers: Mapping[str, str]) -> dict[str, str]:
@@ -153,7 +165,8 @@ def _filter_headers(headers: Mapping[str, str]) -> dict[str, str]:
 
 def _filter_websocket_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {
-        k: v for k, v in headers.items()
+        k: v
+        for k, v in headers.items()
         if k.lower() not in HOP_BY_HOP
         and k.lower() not in WEBSOCKET_HANDSHAKE_HEADERS
         and k.lower() != "origin"
@@ -163,9 +176,7 @@ def _filter_websocket_headers(headers: Mapping[str, str]) -> dict[str, str]:
 def _get_websocket_protocols(request: web.Request) -> tuple[str, ...]:
     raw_protocols = request.headers.get("Sec-WebSocket-Protocol", "")
     return tuple(
-        protocol.strip()
-        for protocol in raw_protocols.split(",")
-        if protocol.strip()
+        protocol.strip() for protocol in raw_protocols.split(",") if protocol.strip()
     )
 
 
@@ -207,7 +218,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         logger.info("%s %s %s -> 404", request.method, host, request.path)
         return web.Response(status=404, text="Not Found")
 
-    host_part = f"[{route.target_host}]" if ":" in route.target_host else route.target_host
+    host_part = (
+        f"[{route.target_host}]" if ":" in route.target_host else route.target_host
+    )
     target_base = f"http://{host_part}:{route.target_port}"
     path = request.match_info.get("path_info", "")
     target_url = f"{target_base}/{path}"
@@ -220,7 +233,9 @@ async def _proxy_handler(request: web.Request) -> web.StreamResponse:
         return await _proxy_websocket(request, target_url)
 
     resp = await _proxy_http(request, target_url)
-    logger.info("%s %s %s -> %s %d", request.method, host, request.path, route.id, resp.status)
+    logger.info(
+        "%s %s %s -> %s %d", request.method, host, request.path, route.id, resp.status
+    )
     return resp
 
 
@@ -259,7 +274,9 @@ async def _proxy_http(request: web.Request, target_url: str) -> web.StreamRespon
 
 
 async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamResponse:
-    ws_target = target_url.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+    ws_target = target_url.replace("http://", "ws://", 1).replace(
+        "https://", "wss://", 1
+    )
     try:
         async with aiohttp.ClientSession() as session:
             ws_headers = _filter_websocket_headers(request.headers)
@@ -271,8 +288,12 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                 protocols=ws_protocols,
                 autoclose=False,
             ) as ws_upstream:
-                response_protocols = (ws_upstream.protocol,) if ws_upstream.protocol else ()
-                ws_response = web.WebSocketResponse(protocols=response_protocols, autoclose=False)
+                response_protocols = (
+                    (ws_upstream.protocol,) if ws_upstream.protocol else ()
+                )
+                ws_response = web.WebSocketResponse(
+                    protocols=response_protocols, autoclose=False
+                )
                 await ws_response.prepare(request)
 
                 async def _forward_client_to_upstream() -> tuple[str, int, bytes]:
@@ -282,11 +303,17 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                             await ws_upstream.send_str(msg.data)
                         elif msg.type == aiohttp.WSMsgType.BINARY:
                             await ws_upstream.send_bytes(msg.data)
-                        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
+                        elif msg.type in (
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSING,
+                        ):
                             code, message = _get_websocket_close_args(msg)
                             return ("upstream", code, message)
                         elif msg.type == aiohttp.WSMsgType.ERROR:
-                            logger.warning("WebSocket client error: %r", _get_websocket_error_detail(msg))
+                            logger.warning(
+                                "WebSocket client error: %r",
+                                _get_websocket_error_detail(msg),
+                            )
                             return ("both", aiohttp.WSCloseCode.INTERNAL_ERROR, b"")
                         elif msg.type == aiohttp.WSMsgType.CLOSED:
                             return ("upstream", aiohttp.WSCloseCode.OK, b"")
@@ -298,11 +325,17 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                             await ws_response.send_str(msg.data)
                         elif msg.type == aiohttp.WSMsgType.BINARY:
                             await ws_response.send_bytes(msg.data)
-                        elif msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING):
+                        elif msg.type in (
+                            aiohttp.WSMsgType.CLOSE,
+                            aiohttp.WSMsgType.CLOSING,
+                        ):
                             code, message = _get_websocket_close_args(msg)
                             return ("client", code, message)
                         elif msg.type == aiohttp.WSMsgType.ERROR:
-                            logger.warning("WebSocket upstream error: %r", _get_websocket_error_detail(msg))
+                            logger.warning(
+                                "WebSocket upstream error: %r",
+                                _get_websocket_error_detail(msg),
+                            )
                             return ("both", aiohttp.WSCloseCode.INTERNAL_ERROR, b"")
                         elif msg.type == aiohttp.WSMsgType.CLOSED:
                             return ("client", aiohttp.WSCloseCode.OK, b"")
@@ -334,13 +367,16 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                 return ws_response
     except aiohttp.WSServerHandshakeError as exc:
         logger.debug("WebSocket upstream rejected handshake: %s", exc)
-        return web.Response(status=exc.status, text=exc.message or "WebSocket handshake failed")
+        return web.Response(
+            status=exc.status, text=exc.message or "WebSocket handshake failed"
+        )
     except aiohttp.ClientError as exc:
         logger.debug("WebSocket upstream error: %s", exc)
         return web.Response(status=502, text="Bad Gateway")
 
 
 # --- ProxyServer ---
+
 
 class ProxyServer:
     def __init__(
@@ -356,10 +392,6 @@ class ProxyServer:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._proxy_runners: list[web.AppRunner] = []
-
-    @property
-    def route_table(self) -> RouteTable:
-        return self._route_table
 
     def start(self) -> None:
         _configure_logging()

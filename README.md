@@ -1,11 +1,12 @@
-Local dev proxy: built-in reverse proxy + process manager with a macOS menu bar app and a Tkinter manager UI.
+Local dev proxy: built-in reverse proxy + process manager with a cross-platform manager window and a system-tray app.
 
 > **No backward compatibility while on `v0.0.x`.** Any release may make breaking changes to
 > the config format, CLI, or behavior without a deprecation path. Pin to an exact version.
 
 ## Installation
 
-macOS only (the menu-bar item and manager UI rely on macOS/pyobjc).
+Cross-platform (macOS, Windows, Linux) — the manager window and system-tray icon
+are built with [PySide6 / Qt 6](https://doc.qt.io/qtforpython-6/). Requires Python 3.13+.
 
 ### Install from a release wheel (recommended)
 
@@ -79,6 +80,8 @@ Configuration lives in a per-user file:
 (honors `$XDG_CONFIG_HOME`). On first run it is created automatically from the bundled
 sample. It holds proxy settings (`http_port`, `bind`), service commands, env/ports, and
 routes. Logs are written next to it under `~/.config/local-dev-proxy/logs/`.
+`http_port` and `bind` are required, values are type-checked without coercion, and
+unknown keys are rejected rather than silently treated as an older config shape.
 
 Edit it from the **Services** tab of the manager window (the config is only editable while
 the services are stopped — press **View Config**, then **Stop All & Edit Config**), or by
@@ -92,30 +95,35 @@ uv run local-dev-proxy
 ```
 
 `uv run local-dev-proxy` **starts the app detached** (it returns your terminal
-immediately) and opens the **manager window**. It is a single process: the Tkinter
+immediately) and opens the **manager window**. It is a single process: the manager
 window owns the in-process reverse proxy and the service processes and calls them
-directly — there is no background admin port or IPC. A macOS menu-bar icon appears; click
-it to bring the window back. Running the command again just raises the existing window.
+directly — there is no background admin port or application-control IPC. A system-tray
+icon appears (in the macOS menu bar / Windows notification area / Linux tray); its menu
+has **Open Manager** and **Quit**. Running the command again reports that it is already
+running; use **Open Manager** from the tray to restore a hidden window. An advisory OS
+file lock prevents multiple app instances; it is not used as a command or data channel.
 
 ### Manager window
 
-A Tkinter window with three tabs:
+A window with three tabs:
 
-- **Services** — status, PID, restart count and exit code for every service, with
+- **Services** — a native Qt tree view showing status, PID, restart count and exit code
+  for every service, with
   per-service Start / Stop / Restart buttons. This tab doubles as the config editor:
   press **View Config** to see `services.toml` (read-only, services still running), then
   **Stop All & Edit Config** to stop the proxy and services and swap to the editor
   (Validate / Save / Reload), then **Start All** to validate, save, and relaunch
   live (no app restart needed) — swapping back to the service list.
 - **Logs** — view or follow (tail) any service's log.
-- **Routes** — every service URL; double-click to open it in your browser.
+- **Routes** — a hierarchical tree view with services as parents and their route URLs
+  as children; click a URL row to open it in your browser.
 
 ### Lifecycle
 
-- **Close the window** → it hides to the menu-bar icon; the proxy and services keep
-  running. Click the icon (or re-run `uv run local-dev-proxy`) to reopen it.
-- **Quit** (the in-window *Quit* button or ⌘Q) → stops the proxy, stops all managed
-  services, and exits the app.
+- **Close the window** → it hides to the system-tray icon; the proxy and services
+  keep running. Choose **Open Manager** from the tray menu to reopen it.
+- **Quit** (the in-window *Quit* button or the tray menu's *Quit*) → stops the
+  proxy, stops all managed services, and exits the app.
 
 `uv run local-dev-proxy --foreground` runs the app in the foreground (blocking) instead of
 detaching — this is what the detached launcher and a packaged build use internally.
@@ -171,5 +179,5 @@ The bundled defaults live in `src/local_dev_proxy/services.toml.sample`.
 - **Service URL not proxying:** open the manager window's **Services** tab to check the
   service state, and confirm the port is set in `services.toml`.
 - **Proxy not responding:** check `~/.config/local-dev-proxy/logs/manager.log` for
-  startup errors. Quit from the window (or ⌘Q), then run `uv run local-dev-proxy` again.
+  startup errors. Quit from the window (or the tray menu), then run `uv run local-dev-proxy` again.
 - **View service logs:** use the **Logs** tab (with *Follow* for a live tail).

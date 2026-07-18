@@ -83,6 +83,9 @@ def test_resolve_routes_duplicate_port(tmp_path: Path) -> None:
 
 def test_resolve_routes_missing_port(tmp_path: Path) -> None:
     toml = """
+http_port = 2800
+bind = ["127.0.0.1"]
+
 [services.oops]
 command = ["oops"]
 
@@ -105,8 +108,18 @@ target_port_env = "OOPS_PORT"
 def test_route_table_match_exact() -> None:
     rt = RouteTable()
     rt._routes = [
-        ResolvedRoute(id="minio", host_patterns=("minios3.localhost",), target_host="127.0.0.1", target_port=19000),
-        ResolvedRoute(id="s3browser", host_patterns=("s3browser.localhost",), target_host="127.0.0.1", target_port=18170),
+        ResolvedRoute(
+            id="minio",
+            host_patterns=("minios3.localhost",),
+            target_host="127.0.0.1",
+            target_port=19000,
+        ),
+        ResolvedRoute(
+            id="s3browser",
+            host_patterns=("s3browser.localhost",),
+            target_host="127.0.0.1",
+            target_port=18170,
+        ),
     ]
 
     match = rt.match("minios3.localhost")
@@ -121,7 +134,12 @@ def test_route_table_match_exact() -> None:
 def test_route_table_match_wildcard() -> None:
     rt = RouteTable()
     rt._routes = [
-        ResolvedRoute(id="minio", host_patterns=("minios3.localhost", "*.minios3.localhost"), target_host="127.0.0.1", target_port=19000),
+        ResolvedRoute(
+            id="minio",
+            host_patterns=("minios3.localhost", "*.minios3.localhost"),
+            target_host="127.0.0.1",
+            target_port=19000,
+        ),
     ]
 
     assert rt.match("bucket.minios3.localhost") is not None
@@ -131,7 +149,12 @@ def test_route_table_match_wildcard() -> None:
 def test_route_table_match_unmatched() -> None:
     rt = RouteTable()
     rt._routes = [
-        ResolvedRoute(id="minio", host_patterns=("minios3.localhost",), target_host="127.0.0.1", target_port=19000),
+        ResolvedRoute(
+            id="minio",
+            host_patterns=("minios3.localhost",),
+            target_host="127.0.0.1",
+            target_port=19000,
+        ),
     ]
 
     assert rt.match("unknown.localhost") is None
@@ -250,7 +273,9 @@ async def test_proxy_forwards_post_body(aiohttp_client: type) -> None:
     proxy_app = make_proxy_app(rt)
     client = await aiohttp_client(proxy_app)
     try:
-        resp = await client.post("/upload", headers={"Host": "test.localhost"}, data=b"hello")
+        resp = await client.post(
+            "/upload", headers={"Host": "test.localhost"}, data=b"hello"
+        )
         assert resp.status == 200
         text = await resp.text()
         assert "method=POST" in text
@@ -356,7 +381,9 @@ async def test_proxy_websocket_forwards_handshake_headers(aiohttp_client: type) 
         await upstream_server.close()
 
 
-async def test_proxy_websocket_forwards_close_code_and_reason(aiohttp_client: type) -> None:
+async def test_proxy_websocket_forwards_close_code_and_reason(
+    aiohttp_client: type,
+) -> None:
     received: dict[str, int | str | None] = {"code": None, "reason": None}
     client_close_code: int | None = None
 
@@ -441,16 +468,24 @@ async def test_proxy_websocket_logs_and_closes_both_sides_on_client_error(
     original_prepare = web.WebSocketResponse.prepare
     original_receive = web.WebSocketResponse.receive
 
-    async def patched_prepare(self: web.WebSocketResponse, request: web.Request) -> web.StreamResponse:
+    async def patched_prepare(
+        self: web.WebSocketResponse, request: web.Request
+    ) -> web.StreamResponse:
         resp = await original_prepare(self, request)
         if request.app is proxy_app:
             setattr(self, "_inject_proxy_error", True)
         return resp
 
-    async def patched_receive(self: web.WebSocketResponse, *args: object, **kwargs: object) -> aiohttp.WSMessage:
-        if getattr(self, "_inject_proxy_error", False) and not getattr(self, "_error_injected", False):
+    async def patched_receive(
+        self: web.WebSocketResponse, *args: object, **kwargs: object
+    ) -> aiohttp.WSMessage:
+        if getattr(self, "_inject_proxy_error", False) and not getattr(
+            self, "_error_injected", False
+        ):
             setattr(self, "_error_injected", True)
-            return aiohttp.WSMessage(aiohttp.WSMsgType.ERROR, RuntimeError("client boom"), None)
+            return aiohttp.WSMessage(
+                aiohttp.WSMsgType.ERROR, RuntimeError("client boom"), None
+            )
         return await original_receive(self, *args, **kwargs)
 
     monkeypatch.setattr(web.WebSocketResponse, "prepare", patched_prepare)
@@ -459,9 +494,15 @@ async def test_proxy_websocket_logs_and_closes_both_sides_on_client_error(
     client = await aiohttp_client(proxy_app)
     try:
         with caplog.at_level(logging.WARNING, logger="local_dev_proxy.proxy"):
-            async with client.ws_connect("/ws", headers={"Host": "test.localhost"}) as ws:
+            async with client.ws_connect(
+                "/ws", headers={"Host": "test.localhost"}
+            ) as ws:
                 msg = await ws.receive()
-                assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED)
+                assert msg.type in (
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.CLOSING,
+                    aiohttp.WSMsgType.CLOSED,
+                )
 
         for _ in range(20):
             if received["type"] is not None:
@@ -526,7 +567,9 @@ async def test_proxy_websocket_logs_and_closes_both_sides_on_upstream_error(
         async def __aexit__(self, exc_type: object, exc: object, tb: object) -> object:
             return await self._inner.__aexit__(exc_type, exc, tb)
 
-    def patched_ws_connect(self: aiohttp.ClientSession, url: object, *args: object, **kwargs: object) -> object:
+    def patched_ws_connect(
+        self: aiohttp.ClientSession, url: object, *args: object, **kwargs: object
+    ) -> object:
         ctx = original_ws_connect(self, url, *args, **kwargs)
         if upstream_ref in str(url):
             return _MarkedWSConnect(ctx)
@@ -537,9 +580,13 @@ async def test_proxy_websocket_logs_and_closes_both_sides_on_upstream_error(
         *args: object,
         **kwargs: object,
     ) -> aiohttp.WSMessage:
-        if getattr(self, "_inject_proxy_error", False) and not getattr(self, "_error_injected", False):
+        if getattr(self, "_inject_proxy_error", False) and not getattr(
+            self, "_error_injected", False
+        ):
             setattr(self, "_error_injected", True)
-            return aiohttp.WSMessage(aiohttp.WSMsgType.ERROR, RuntimeError("upstream boom"), None)
+            return aiohttp.WSMessage(
+                aiohttp.WSMsgType.ERROR, RuntimeError("upstream boom"), None
+            )
         return await original_receive(self, *args, **kwargs)
 
     monkeypatch.setattr(aiohttp.ClientSession, "ws_connect", patched_ws_connect)
@@ -548,9 +595,15 @@ async def test_proxy_websocket_logs_and_closes_both_sides_on_upstream_error(
     client = await aiohttp_client(proxy_app)
     try:
         with caplog.at_level(logging.WARNING, logger="local_dev_proxy.proxy"):
-            async with client.ws_connect("/ws", headers={"Host": "test.localhost"}) as ws:
+            async with client.ws_connect(
+                "/ws", headers={"Host": "test.localhost"}
+            ) as ws:
                 msg = await ws.receive()
-                assert msg.type in (aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSING, aiohttp.WSMsgType.CLOSED)
+                assert msg.type in (
+                    aiohttp.WSMsgType.CLOSE,
+                    aiohttp.WSMsgType.CLOSING,
+                    aiohttp.WSMsgType.CLOSED,
+                )
 
         for _ in range(20):
             if received["type"] is not None:
@@ -565,7 +618,9 @@ async def test_proxy_websocket_logs_and_closes_both_sides_on_upstream_error(
         await upstream_server.close()
 
 
-async def test_proxy_websocket_returns_upstream_handshake_failure(aiohttp_client: type) -> None:
+async def test_proxy_websocket_returns_upstream_handshake_failure(
+    aiohttp_client: type,
+) -> None:
     async def ws_handler(_: web.Request) -> web.StreamResponse:
         return web.Response(status=403, text="forbidden")
 

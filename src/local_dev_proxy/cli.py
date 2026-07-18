@@ -1,34 +1,31 @@
 from __future__ import annotations
 
-import os
-import signal
 import subprocess
 import sys
-import time
 
 import typer
 
-from .config import ensure_config, manager_pid
+from .config import ensure_config, manager_running
 
 app = typer.Typer(
-    help="Local dev proxy: reverse proxy + process manager with a Tkinter manager UI.",
+    help="Local dev proxy: reverse proxy + process manager with a PySide6 manager UI.",
     invoke_without_command=True,
     no_args_is_help=False,
 )
 
 
-def _spawn_detached() -> int | None:
-    """Launch the app (proxy + services + window + menu-bar icon) detached.
+def _spawn_detached() -> int:
+    """Launch the app (proxy + services + window + system-tray icon) detached.
 
     Re-execs ``python -m local_dev_proxy --foreground`` in a new session with
-    output redirected to the log dir, then waits briefly for the single-instance
-    lock to be taken and returns the process PID.
+    output redirected to the log dir and returns the spawned process PID. There
+    is no startup handshake or command channel back to the launcher.
     """
     paths = ensure_config()
     log_file = paths.logs_dir / "manager.log"
     out = open(log_file, "ab")
     try:
-        subprocess.Popen(
+        process = subprocess.Popen(
             [sys.executable, "-m", "local_dev_proxy", "--foreground"],
             stdin=subprocess.DEVNULL,
             stdout=out,
@@ -38,13 +35,7 @@ def _spawn_detached() -> int | None:
         )
     finally:
         out.close()
-
-    for _ in range(50):  # wait up to ~5s for the lock to be acquired
-        pid = manager_pid()
-        if pid is not None:
-            return pid
-        time.sleep(0.1)
-    return None
+    return process.pid
 
 
 @app.callback(invoke_without_command=True)
@@ -56,7 +47,7 @@ def main(
         help="Run the app in the foreground (blocking). Used by the detached spawn.",
     ),
 ) -> None:
-    """Start the app detached and open the manager window (re-run to reopen it)."""
+    """Start the app detached and open its manager window."""
     ensure_config()
 
     if foreground:
@@ -65,20 +56,11 @@ def main(
         run_gui()
         return
 
-    pid = manager_pid()
-    if pid is not None:
-        try:
-            os.kill(pid, signal.SIGUSR1)  # ask the running app to raise its window
-        except ProcessLookupError:
-            pass  # stale PID (process gone); fall through to a fresh spawn
-        else:
-            typer.echo(f"local-dev-proxy is already running (PID {pid}).")
-            return
+    if manager_running():
+        typer.echo("local-dev-proxy is already running; use the tray menu to open it.")
+        return
 
     pid = _spawn_detached()
-    if pid is None:
-        typer.echo("Error: app did not start in time (see manager.log).", err=True)
-        raise typer.Exit(code=1)
     typer.echo(f"Started local-dev-proxy (PID {pid}).")
 
 

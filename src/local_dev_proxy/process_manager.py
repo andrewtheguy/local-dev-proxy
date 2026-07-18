@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 import signal
@@ -11,8 +10,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .routes import RoutesManifest, resolve_command
-
-_PIDFILE_NAME = "service_pids.json"
 
 logger = logging.getLogger(__name__)
 
@@ -69,12 +66,10 @@ class ServiceManager:
                 )
 
     def start_all(self) -> None:
-        self._kill_stale_pids()
         with self._lock:
             for name, info in self._services.items():
                 if info.managed:
                     self._start_service_locked(name)
-            self._save_pidfile()
         self._start_monitor()
 
     def stop_all(self) -> None:
@@ -88,7 +83,6 @@ class ServiceManager:
                         self._stop_service_locked(name)
                     except Exception:
                         logger.exception("Error stopping service %s", name)
-            self._remove_pidfile()
 
     def start_service(self, name: str) -> None:
         with self._lock:
@@ -112,14 +106,16 @@ class ServiceManager:
         with self._lock:
             result = []
             for info in self._services.values():
-                result.append({
-                    "name": info.name,
-                    "status": info.status,
-                    "managed": info.managed,
-                    "pid": info.pid,
-                    "exit_code": info.exit_code,
-                    "restart_count": info.restart_count,
-                })
+                result.append(
+                    {
+                        "name": info.name,
+                        "status": info.status,
+                        "managed": info.managed,
+                        "pid": info.pid,
+                        "exit_code": info.exit_code,
+                        "restart_count": info.restart_count,
+                    }
+                )
             return result
 
     def get_log_path(self, name: str) -> Path:
@@ -146,9 +142,9 @@ class ServiceManager:
         log_path = self.get_log_path(name)
         log_file = open(log_path, "a")
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        log_file.write(f"\n{'='*60}\n")
+        log_file.write(f"\n{'=' * 60}\n")
         log_file.write(f"--- {name} started at {timestamp} ---\n")
-        log_file.write(f"{'='*60}\n")
+        log_file.write(f"{'=' * 60}\n")
         log_file.flush()
 
         try:
@@ -165,14 +161,15 @@ class ServiceManager:
             log_file.close()
             info.status = "crashed"
             info.pid = None
-            logger.error("Failed to start %s: command not found: %s", name, info.command[0])
+            logger.error(
+                "Failed to start %s: command not found: %s", name, info.command[0]
+            )
             return
 
         info.process = process
         info.pid = process.pid
         info.status = "running"
         info.exit_code = None
-        self._save_pidfile()
         logger.info("Started %s (PID %d)", name, process.pid)
 
     def _stop_service_locked(self, name: str) -> None:
@@ -203,42 +200,6 @@ class ServiceManager:
         info.pid = None
         info.process = None
         logger.info("Stopped %s (exit code %s)", name, info.exit_code)
-
-    @property
-    def _pidfile_path(self) -> Path:
-        return self._log_dir / _PIDFILE_NAME
-
-    def _save_pidfile(self) -> None:
-        pids: dict[str, int] = {}
-        for info in self._services.values():
-            if info.pid is not None:
-                pids[info.name] = info.pid
-        try:
-            self._pidfile_path.write_text(json.dumps(pids))
-        except OSError:
-            pass
-
-    def _remove_pidfile(self) -> None:
-        try:
-            self._pidfile_path.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-    def _kill_stale_pids(self) -> None:
-        try:
-            data = json.loads(self._pidfile_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return
-
-        for name, pid in data.items():
-            try:
-                pgid = os.getpgid(pid)
-                os.killpg(pgid, signal.SIGTERM)
-                logger.info("Killed stale process group for %s (PID %d)", name, pid)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
-
-        self._remove_pidfile()
 
     def _start_monitor(self) -> None:
         self._monitor_stop.clear()
