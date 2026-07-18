@@ -1,0 +1,58 @@
+name: Deploy Pages
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy-pages:
+    if: github.ref_name == 'main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate PEP 503 package index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          generate_index() {
+            local repo="$1"
+            local pkg="$2"
+            mkdir -p "_pages/simple/${pkg}"
+            {
+              echo '<!DOCTYPE html><html><body>'
+              gh release list --repo "$repo" --limit 100 --exclude-drafts --json tagName --jq '.[].tagName' | while read -r tag; do
+                gh release view "$tag" --repo "$repo" --json assets --jq '.assets[] | select(.name | endswith(".whl")) | .name' | while read -r name; do
+                  echo "<a href=\"https://github.com/${repo}/releases/download/${tag}/${name}\">${name}</a><br>"
+                done
+              done
+              echo '</body></html>'
+            } > "_pages/simple/${pkg}/index.html"
+          }
+
+          generate_index "${GH_REPO}" "local-dev-proxy"
+
+          cat > _pages/simple/index.html <<'HTML'
+          <!DOCTYPE html><html><body>
+          <a href="local-dev-proxy/">local-dev-proxy</a>
+          </body></html>
+          HTML
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '_pages'
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # macOS runner: the app targets macOS (pyobjc menu-bar item, Tk manager UI),
+    # so the platform-conditional dependencies only install here.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint with ruff
+        run: uv run ruff check
+
+      - name: Type check with basedpyright
+        run: uv run basedpyright
+
+      - name: Test with pytest
+        run: uv run pytest

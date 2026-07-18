@@ -9,7 +9,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 import aiohttp
 from aiohttp import web
@@ -169,9 +169,10 @@ def _get_websocket_protocols(request: web.Request) -> tuple[str, ...]:
     )
 
 
-def _get_websocket_close_args(msg: aiohttp.WSMessage) -> tuple[int, str | bytes]:
+def _get_websocket_close_args(msg: aiohttp.WSMessage) -> tuple[int, bytes]:
     code = msg.data if isinstance(msg.data, int) else aiohttp.WSCloseCode.OK
-    message = msg.extra if msg.extra is not None else b""
+    extra = msg.extra
+    message = extra.encode() if extra is not None else b""
     return code, message
 
 
@@ -274,7 +275,7 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                 ws_response = web.WebSocketResponse(protocols=response_protocols, autoclose=False)
                 await ws_response.prepare(request)
 
-                async def _forward_client_to_upstream() -> tuple[str, int, str | bytes]:
+                async def _forward_client_to_upstream() -> tuple[str, int, bytes]:
                     while True:
                         msg = await ws_response.receive()
                         if msg.type == aiohttp.WSMsgType.TEXT:
@@ -290,7 +291,7 @@ async def _proxy_websocket(request: web.Request, target_url: str) -> web.StreamR
                         elif msg.type == aiohttp.WSMsgType.CLOSED:
                             return ("upstream", aiohttp.WSCloseCode.OK, b"")
 
-                async def _forward_upstream_to_client() -> tuple[str, int, str | bytes]:
+                async def _forward_upstream_to_client() -> tuple[str, int, bytes]:
                     while True:
                         msg = await ws_upstream.receive()
                         if msg.type == aiohttp.WSMsgType.TEXT:

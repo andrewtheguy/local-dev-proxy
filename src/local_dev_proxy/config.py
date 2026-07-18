@@ -8,7 +8,7 @@ import fcntl
 import os
 import shutil
 import subprocess
-from typing import Mapping
+from collections.abc import Mapping
 
 _APP_NAME = "local-dev-proxy"
 _SAMPLE_RESOURCE = "services.toml.sample"

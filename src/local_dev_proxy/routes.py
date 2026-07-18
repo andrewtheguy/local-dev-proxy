@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 import tomllib
-from typing import Mapping
+from collections.abc import Mapping
 
 
 class RouteConfigError(ValueError):

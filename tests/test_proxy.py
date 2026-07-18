@@ -7,7 +7,7 @@ from pathlib import Path
 import aiohttp
 import pytest
 from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp.test_utils import TestServer
 
 from local_dev_proxy.proxy import (
     ResolvedRoute,

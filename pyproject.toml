@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "local-dev-proxy"
 version = "0.1.0"
 description = "Local dev orchestration with built-in reverse proxy and zellij services"
+authors = [{ name = "Andrew Chen", email = "hello@andrewtheguy.com" }]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -21,6 +22,8 @@ local-dev-proxy = "local_dev_proxy.cli:app"
 dev = [
   "pytest>=8.0.0",
   "pytest-aiohttp>=1.0.0",
+  "ruff>=0.14.6",
+  "basedpyright>=1.29.0",
 ]
 
 [tool.uv]
@@ -37,3 +40,30 @@ artifacts = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+
+[tool.pyright]
+# gui.py (Tkinter) and status_item.py (pyobjc/AppKit) wrap dynamic native
+# toolkits with no type stubs, so they are excluded from static checking.
+exclude = [
+    ".venv", "build", "dist", ".git", "tests", "tmp",
+    "src/local_dev_proxy/gui.py",
+    "src/local_dev_proxy/status_item.py",
+]
+reportUnknownParameterType = true
+reportUninitializedInstanceVariable = true
+# Disable basedpyright-specific strict rules
+reportMissingTypeStubs = false
+reportExplicitAny = false
+reportAny = false
+reportUnannotatedClassAttribute = false
+reportUnknownMemberType = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
+reportImplicitStringConcatenation = false
+reportMissingImports = true
+reportMissingModuleSource = false
+reportUnusedCallResult = false
+reportImplicitOverride = false
+# typer's API relies on function calls (Option/Argument) as parameter defaults.
+reportCallInDefaultInitializer = false
