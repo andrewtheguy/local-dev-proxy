@@ -240,7 +240,7 @@ class LogsTab(ttk.Frame):
         ttk.Checkbutton(controls, text="Follow", variable=self._follow, command=self._tick).pack(side="left")
         ttk.Button(controls, text="Refresh", command=self._tick).pack(side="right")
 
-        self._text = tk.Text(self, wrap="none", height=20, font=("Menlo", 11))
+        self._text = tk.Text(self, wrap="word", height=20, font=("Menlo", 9))
         self._text.pack(fill="both", expand=True, pady=(6, 0))
         yscroll = ttk.Scrollbar(self._text, command=self._text.yview)
         yscroll.pack(side="right", fill="y")
