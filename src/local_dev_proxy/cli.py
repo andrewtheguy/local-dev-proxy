@@ -9,7 +9,7 @@ import typer
 from .config import ensure_config, manager_pid, request_raise
 
 app = typer.Typer(
-    help="Local dev proxy: reverse proxy + process manager with a Slint manager UI.",
+    help="Local dev proxy: reverse proxy + process manager with a PySide6 manager UI.",
     invoke_without_command=True,
     no_args_is_help=False,
 )

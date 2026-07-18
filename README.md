@@ -6,7 +6,7 @@ Local dev proxy: built-in reverse proxy + process manager with a cross-platform 
 ## Installation
 
 Cross-platform (macOS, Windows, Linux) — the manager window and system-tray icon
-are built with [Slint](https://slint.dev/). Requires Python 3.13+.
+are built with [PySide6 / Qt 6](https://doc.qt.io/qtforpython-6/). Requires Python 3.13+.
 
 ### Install from a release wheel (recommended)
 
@@ -103,14 +103,16 @@ Manager** and **Quit**. Running the command again just raises the existing windo
 
 A window with three tabs:
 
-- **Services** — status, PID, restart count and exit code for every service, with
+- **Services** — a native Qt tree view showing status, PID, restart count and exit code
+  for every service, with
   per-service Start / Stop / Restart buttons. This tab doubles as the config editor:
   press **View Config** to see `services.toml` (read-only, services still running), then
   **Stop All & Edit Config** to stop the proxy and services and swap to the editor
   (Validate / Save / Reload), then **Start All** to validate, save, and relaunch
   live (no app restart needed) — swapping back to the service list.
 - **Logs** — view or follow (tail) any service's log.
-- **Routes** — every service URL; double-click to open it in your browser.
+- **Routes** — a hierarchical tree view with services as parents and their route URLs
+  as children; click a URL row to open it in your browser.
 
 ### Lifecycle
 
