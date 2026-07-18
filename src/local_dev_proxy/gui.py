@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import atexit
 import fcntl
+import logging
 import os
 import signal
 import sys
@@ -16,6 +18,8 @@ from .proxy import ProxyServer
 from .routes import RouteConfigError, load_routes, validate_toml
 from .services import start_proxy, start_services_managed
 from .status_item import install_status_item, remove_status_item
+
+logger = logging.getLogger(__name__)
 
 _POLL_MS = 2000  # tab refresh cadence
 _SIGNAL_POLL_MS = 300  # signal / raise-window flag cadence
@@ -74,6 +78,11 @@ class ManagerApp:
         self._shutdown_flag = threading.Event()
         self._quitting = False
 
+        # Last-resort safety net: whatever path exits the interpreter (an
+        # unhandled exception, sys.exit, mainloop returning), still stop the
+        # child processes so services never outlive the app. Idempotent.
+        atexit.register(self._stop_children_safely)
+
     # --- in-process lifecycle -------------------------------------------------
 
     def start_services(self) -> None:
@@ -92,13 +101,29 @@ class ManagerApp:
         self.running = True
 
     def stop_services(self) -> None:
-        """Stop the proxy and all managed services (keeps the window open)."""
-        if self.proxy is not None:
-            self.proxy.stop()
-            self.proxy = None
-        if self.service_manager is not None:
-            self.service_manager.stop_all()
-        self.running = False
+        """Stop the proxy and all managed services (keeps the window open).
+
+        Never raises: the service teardown must run even if stopping the proxy
+        fails, so child processes are never orphaned, and this is also the
+        shutdown path — a proxy error here must not derail ``quit()``.
+        """
+        proxy, self.proxy = self.proxy, None
+        try:
+            if proxy is not None:
+                proxy.stop()
+        except Exception:
+            logger.exception("Error stopping proxy during shutdown")
+        finally:
+            if self.service_manager is not None:
+                self.service_manager.stop_all()
+            self.running = False
+
+    def _stop_children_safely(self) -> None:
+        """atexit hook: guarantee child processes are stopped, swallowing errors."""
+        try:
+            self.stop_services()
+        except Exception:  # noqa: BLE001 — exit-time best effort
+            pass
 
     # --- UI -------------------------------------------------------------------
 
@@ -119,8 +144,12 @@ class ManagerApp:
     # --- signals / window plumbing -------------------------------------------
 
     def install_signals(self) -> None:
-        signal.signal(signal.SIGTERM, lambda *_: self._shutdown_flag.set())
-        signal.signal(signal.SIGINT, lambda *_: self._shutdown_flag.set())
+        # Any terminating signal we can catch routes to an orderly quit (which
+        # stops all services). SIGHUP included so a session hangup tears down too.
+        for signame in ("SIGTERM", "SIGINT", "SIGHUP"):
+            sig = getattr(signal, signame, None)
+            if sig is not None:
+                signal.signal(sig, lambda *_: self._shutdown_flag.set())
         signal.signal(signal.SIGUSR1, lambda *_: self._raise_flag.set())
         self._poll_signals()
 
@@ -161,7 +190,10 @@ class ManagerApp:
         if self._lock_fd is not None:
             os.close(self._lock_fd)
             self._lock_fd = None
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass  # already torn down (e.g. quit() from the mainloop finally)
 
 
 class ServicesTab(ttk.Frame):
@@ -510,4 +542,9 @@ def run_gui() -> None:
     except Exception as exc:  # noqa: BLE001 — surface, don't crash the window
         print(f"Startup failed; services left stopped: {exc}", file=sys.stderr)
 
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        # Guarantee teardown even if mainloop exits abnormally (e.g. an
+        # unhandled exception in a Tk callback) so services never outlive the app.
+        app.quit()
