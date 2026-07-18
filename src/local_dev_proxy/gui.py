@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import atexit
-import fcntl
 import logging
 import os
 import signal
@@ -12,8 +11,18 @@ import webbrowser
 from pathlib import Path
 from tkinter import ttk
 
+from filelock import FileLock
+
 from . import __version__
-from .config import LOCK_PATH, ProjectPaths, dock_icon_path, ensure_config, icon_path
+from .config import (
+    AlreadyRunningError,
+    ProjectPaths,
+    acquire_instance_lock,
+    dock_icon_path,
+    ensure_config,
+    icon_path,
+    release_instance_lock,
+)
 from .process_manager import ServiceManager
 from .proxy import ProxyServer
 from .routes import RouteConfigError, load_routes, validate_toml
@@ -26,16 +35,13 @@ _POLL_MS = 2000  # tab refresh cadence
 _SIGNAL_POLL_MS = 300  # signal / raise-window flag cadence
 
 
-def _acquire_lock() -> int:
+def _acquire_lock() -> FileLock:
     """Take the single-instance lock; exit if another manager already holds it."""
-    fd = os.open(LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o644)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        os.close(fd)
-        print("local-dev-proxy is already running.", file=sys.stderr)
+        return acquire_instance_lock()
+    except AlreadyRunningError as exc:
+        print(str(exc), file=sys.stderr)
         sys.exit(1)
-    return fd
 
 
 def _tail_file(path: Path, lines: int) -> str:
@@ -66,10 +72,10 @@ def _tail_file(path: Path, lines: int) -> str:
 class ManagerApp:
     """The single-process app: owns the proxy + service manager and the window."""
 
-    def __init__(self, root: tk.Tk, paths: ProjectPaths, lock_fd: int) -> None:
+    def __init__(self, root: tk.Tk, paths: ProjectPaths, lock: FileLock) -> None:
         self.root = root
         self.paths = paths
-        self._lock_fd: int | None = lock_fd
+        self._lock: FileLock | None = lock
         self.service_manager: ServiceManager | None = None
         self.proxy: ProxyServer | None = None
         self.running = False
@@ -214,9 +220,9 @@ class ManagerApp:
         self._quitting = True
         self.stop_services()
         remove_status_item(self._status_handle)
-        if self._lock_fd is not None:
-            os.close(self._lock_fd)
-            self._lock_fd = None
+        if self._lock is not None:
+            release_instance_lock(self._lock)
+            self._lock = None
         try:
             self.root.destroy()
         except tk.TclError:
@@ -704,13 +710,13 @@ class RoutesTab(ttk.Frame):
 
 def run_gui() -> None:
     paths = ensure_config()
-    lock_fd = _acquire_lock()
+    lock = _acquire_lock()
 
     root = tk.Tk()
     root.title(f"Local Dev Proxy — Manager v{__version__}")
     root.geometry("760x560")
 
-    app = ManagerApp(root, paths, lock_fd)
+    app = ManagerApp(root, paths, lock)
     # Start services before building the window so the Services tab paints in its
     # running (list) view from the first frame — no flash of the config editor.
     # start_services() rolls back on failure (running stays False), so a bad

@@ -4,49 +4,73 @@ from dataclasses import dataclass
 from importlib import resources
 from importlib.resources.abc import Traversable
 from pathlib import Path
-import fcntl
 import os
 import shutil
-import subprocess
+import tempfile
 from collections.abc import Mapping
+
+from filelock import FileLock, Timeout
 
 _APP_NAME = "local-dev-proxy"
 _SAMPLE_RESOURCE = "services.toml.sample"
 _ICON_RESOURCE = "assets/tray-icon.png"
 _DOCK_ICON_RESOURCE = "assets/dock-icon.png"
 
-# Single-instance lock for the running manager (proxy + service manager).
-LOCK_PATH = os.path.join(os.environ.get("TMPDIR", "/tmp"), "local-dev-proxy.lock")
+# Single-instance lock for the running manager (proxy + service manager). Backed
+# by ``filelock``, whose OS-level advisory lock is released automatically when the
+# holding process dies, so the lock never goes stale. A sidecar pidfile records
+# the holder's PID (the OS lock alone can't tell us who holds it cross-platform).
+LOCK_PATH = os.path.join(tempfile.gettempdir(), "local-dev-proxy.lock")
+PID_PATH = os.path.join(tempfile.gettempdir(), "local-dev-proxy.pid")
+
+
+class AlreadyRunningError(RuntimeError):
+    """Raised when the single-instance lock is already held by another manager."""
+
+
+def acquire_instance_lock() -> FileLock:
+    """Take the single-instance lock and record our PID; hold the returned lock
+    for the manager's lifetime and pass it to :func:`release_instance_lock`.
+
+    Raises :class:`AlreadyRunningError` if another manager already holds it.
+    """
+    lock = FileLock(LOCK_PATH)
+    try:
+        lock.acquire(timeout=0)
+    except Timeout as exc:
+        raise AlreadyRunningError("local-dev-proxy is already running.") from exc
+    Path(PID_PATH).write_text(str(os.getpid()))
+    return lock
+
+
+def release_instance_lock(lock: FileLock) -> None:
+    """Release the single-instance lock and remove the sidecar pidfile."""
+    lock.release()
+    try:
+        os.remove(PID_PATH)
+    except OSError:
+        pass  # already gone (or another instance owns it now)
 
 
 def manager_pid() -> int | None:
     """Return the PID of the running manager, or None if not running.
 
-    Detected via the single-instance flock: if we can take the lock the
-    manager is not running; otherwise ``lsof`` tells us who holds it.
+    Probed via the single-instance lock: if we can take it (non-blocking) the
+    manager is not running; otherwise the sidecar pidfile names the holder.
     """
+    lock = FileLock(LOCK_PATH)
     try:
-        fd = os.open(LOCK_PATH, os.O_WRONLY)
-    except FileNotFoundError:
-        return None
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        lock.acquire(timeout=0)
+    except Timeout:
+        pass  # held -> manager is running
+    else:
+        lock.release()
         return None  # lock was free -> nobody running
-    except OSError:
-        pass  # lock held -> manager is running
-    finally:
-        os.close(fd)
 
     try:
-        out = subprocess.check_output(
-            ["lsof", "-t", LOCK_PATH], text=True, stderr=subprocess.DEVNULL
-        ).strip()
-        if out:
-            return int(out.splitlines()[0])
-    except (subprocess.CalledProcessError, ValueError):
-        pass
-    return None
+        return int(Path(PID_PATH).read_text().strip())
+    except (OSError, ValueError):
+        return None  # pidfile missing/corrupt (e.g. mid-startup race)
 
 
 def manager_running() -> bool:
