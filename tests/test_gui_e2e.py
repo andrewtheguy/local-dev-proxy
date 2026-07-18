@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,12 +18,7 @@ from local_dev_proxy.routes import load_routes
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-REQUESTED_CONFIGTEST = PROJECT_ROOT / "tmp" / "configtest.toml"
-CONFIGTEST = (
-    REQUESTED_CONFIGTEST
-    if REQUESTED_CONFIGTEST.is_file()
-    else PROJECT_ROOT / "tests" / "fixtures" / "configtest.toml"
-)
+CONFIGTEST_FIXTURE = PROJECT_ROOT / "tests" / "fixtures" / "configtest.toml"
 SCREENSHOTS = PROJECT_ROOT / "tmp" / "e2e-screenshots"
 
 
@@ -137,14 +134,15 @@ class FakeProxy:
 
 
 @pytest.fixture
-def preserved_configtest() -> bytes:
-    assert CONFIGTEST.is_file(), f"Missing requested test config: {CONFIGTEST}"
-    original = CONFIGTEST.read_bytes()
+def isolated_configtest(tmp_path: Path) -> Iterator[tuple[Path, bytes]]:
+    configtest = tmp_path / "configtest.toml"
+    shutil.copyfile(CONFIGTEST_FIXTURE, configtest)
+    original = configtest.read_bytes()
     try:
-        yield original
+        yield configtest, original
     finally:
-        CONFIGTEST.write_bytes(original)
-        CONFIGTEST.with_name(f"{CONFIGTEST.name}.tmp").unlink(missing_ok=True)
+        configtest.write_bytes(original)
+        configtest.with_name(f"{configtest.name}.tmp").unlink(missing_ok=True)
 
 
 def _find_service_row(controller: ManagerController, name: str) -> int:
@@ -211,8 +209,9 @@ def test_all_manager_flows_with_screenshots(
     qtbot: object,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    preserved_configtest: bytes,
+    isolated_configtest: tuple[Path, bytes],
 ) -> None:
+    configtest, original_config = isolated_configtest
     monkeypatch.setenv("LOCAL_DEV_PROXY_CONFIG_DIR", str(tmp_path / "icon-cache"))
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
     opened_urls: list[str] = []
@@ -220,8 +219,8 @@ def test_all_manager_flows_with_screenshots(
     proxies: list[FakeProxy] = []
 
     paths = ProjectPaths(
-        config_dir=CONFIGTEST.parent,
-        services_file=CONFIGTEST,
+        config_dir=configtest.parent,
+        services_file=configtest,
         logs_dir=tmp_path / "logs",
     )
 
@@ -299,7 +298,7 @@ def test_all_manager_flows_with_screenshots(
     # Read-only config, stop-to-edit, validation failure, reload, and save.
     qtbot.mouseClick(window.view_config_button, Qt.MouseButton.LeftButton)
     assert window.services_stack.currentWidget() is window.readonly_view
-    assert window.readonly_config.toPlainText() == preserved_configtest.decode()
+    assert window.readonly_config.toPlainText() == original_config.decode()
     assert window.edit_config_button.text() == "Stop All && Edit Config"
     assert window.edit_config_button.parentWidget() is window.services_tab
     back_position = window.view_config_button.mapTo(
@@ -329,7 +328,7 @@ def test_all_manager_flows_with_screenshots(
     )
     screenshot("06-config-editing")
 
-    window.config_editor.setPlainText(preserved_configtest.decode() + "\n[")
+    window.config_editor.setPlainText(original_config.decode() + "\n[")
     qtbot.waitUntil(window.dirty_label.isVisible)
     qtbot.mouseClick(window.validate_button, Qt.MouseButton.LeftButton)
     assert window.status_label.text() == "invalid"
@@ -337,14 +336,14 @@ def test_all_manager_flows_with_screenshots(
     screenshot("07-config-invalid")
 
     qtbot.mouseClick(window.reload_config_button, Qt.MouseButton.LeftButton)
-    assert window.config_editor.toPlainText() == preserved_configtest.decode()
+    assert window.config_editor.toPlainText() == original_config.decode()
     assert not window.dirty_label.isVisible()
     screenshot("08-config-reloaded")
 
-    saved_text = preserved_configtest.decode() + "\n# saved by the PySide6 E2E flow\n"
+    saved_text = original_config.decode() + "\n# saved by the PySide6 E2E flow\n"
     window.config_editor.setPlainText(saved_text)
     qtbot.mouseClick(window.save_button, Qt.MouseButton.LeftButton)
-    assert CONFIGTEST.read_text() == saved_text
+    assert configtest.read_text() == saved_text
     assert window.status_label.text() == "saved ✓"
     assert not window.dirty_label.isVisible()
     screenshot("09-config-saved")
@@ -429,10 +428,11 @@ def test_tray_quit_action_uses_full_cleanup(
     qtbot: object,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    preserved_configtest: bytes,
+    isolated_configtest: tuple[Path, bytes],
 ) -> None:
+    configtest, original_config = isolated_configtest
     monkeypatch.setenv("LOCAL_DEV_PROXY_CONFIG_DIR", str(tmp_path / "icon-cache"))
-    paths = ProjectPaths(CONFIGTEST.parent, CONFIGTEST, tmp_path / "logs")
+    paths = ProjectPaths(configtest.parent, configtest, tmp_path / "logs")
     proxies: list[FakeProxy] = []
 
     def proxy_factory(_paths: ProjectPaths) -> FakeProxy:
@@ -457,4 +457,4 @@ def test_tray_quit_action_uses_full_cleanup(
     assert controller._quitting
     assert not controller.window.isVisible()
     assert proxies[0].stopped
-    assert CONFIGTEST.read_bytes() == preserved_configtest
+    assert configtest.read_bytes() == original_config
