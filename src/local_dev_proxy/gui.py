@@ -1,46 +1,153 @@
 from __future__ import annotations
 
+import fcntl
 import os
 import signal
-import time
+import sys
+import threading
 import tkinter as tk
 import webbrowser
+from pathlib import Path
 from tkinter import ttk
 
-from . import admin
-from .config import ProjectPaths, ensure_config, manager_pid, manager_running
+from .config import LOCK_PATH, ProjectPaths, ensure_config, icon_path
+from .process_manager import ServiceManager
+from .proxy import ProxyServer
 from .routes import RouteConfigError, load_routes, validate_toml
+from .services import start_proxy, start_services_managed
+from .status_item import install_status_item, remove_status_item
 
-_POLL_MS = 2000
+_POLL_MS = 2000  # tab refresh cadence
+_SIGNAL_POLL_MS = 300  # signal / raise-window flag cadence
 
 
-def _stop_manager() -> bool:
-    """SIGTERM the running manager and wait for it to exit. Returns True if stopped."""
-    pid = manager_pid()
-    if pid is None:
-        return True
+def _acquire_lock() -> int:
+    """Take the single-instance lock; exit if another manager already holds it."""
+    fd = os.open(LOCK_PATH, os.O_CREAT | os.O_WRONLY, 0o644)
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return True
-    for _ in range(50):
-        if manager_pid() is None:
-            return True
-        time.sleep(0.1)
-    return False
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        print("local-dev-proxy is already running.", file=sys.stderr)
+        sys.exit(1)
+    return fd
 
 
-def _start_manager_detached() -> None:
-    from .cli import _spawn_detached
+def _tail_file(path: Path, lines: int) -> str:
+    if not path.exists():
+        return ""
+    data = path.read_text(errors="replace").splitlines()
+    tail = data[-lines:] if len(data) > lines else data
+    return "\n".join(tail) + ("\n" if tail else "")
 
-    _spawn_detached()
+
+class ManagerApp:
+    """The single-process app: owns the proxy + service manager and the window."""
+
+    def __init__(self, root: tk.Tk, paths: ProjectPaths, lock_fd: int) -> None:
+        self.root = root
+        self.paths = paths
+        self._lock_fd: int | None = lock_fd
+        self.service_manager: ServiceManager | None = None
+        self.proxy: ProxyServer | None = None
+        self.running = False
+
+        self._status_handle: object | None = None
+        self._raise_flag = threading.Event()
+        self._shutdown_flag = threading.Event()
+        self._quitting = False
+
+    # --- in-process lifecycle -------------------------------------------------
+
+    def start_services(self) -> None:
+        """(Re)build the manager + proxy from the current config and start them."""
+        if self.running:
+            return
+        self.service_manager = start_services_managed(self.paths)
+        self.service_manager.start_all()
+        self.proxy = start_proxy(self.paths)
+        self.running = True
+
+    def stop_services(self) -> None:
+        """Stop the proxy and all managed services (keeps the window open)."""
+        if self.proxy is not None:
+            self.proxy.stop()
+            self.proxy = None
+        if self.service_manager is not None:
+            self.service_manager.stop_all()
+        self.running = False
+
+    # --- UI -------------------------------------------------------------------
+
+    def build_ui(self) -> None:
+        toolbar = ttk.Frame(self.root, padding=(8, 6, 8, 0))
+        toolbar.pack(fill="x")
+        ttk.Button(toolbar, text="Quit", command=self.quit).pack(side="right")
+
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill="both", expand=True, padx=8, pady=8)
+        notebook.add(ServicesTab(notebook, self), text="Services")
+        notebook.add(LogsTab(notebook, self), text="Logs")
+        notebook.add(RoutesTab(notebook, self.paths), text="Routes")
+        notebook.add(ConfigTab(notebook, self), text="Config")
+
+    def install_icon(self) -> None:
+        self._status_handle = install_status_item(icon_path(), self._raise_flag.set)
+
+    # --- signals / window plumbing -------------------------------------------
+
+    def install_signals(self) -> None:
+        signal.signal(signal.SIGTERM, lambda *_: self._shutdown_flag.set())
+        signal.signal(signal.SIGINT, lambda *_: self._shutdown_flag.set())
+        signal.signal(signal.SIGUSR1, lambda *_: self._raise_flag.set())
+        self._poll_signals()
+
+    def wire_lifecycle(self) -> None:
+        self.root.protocol("WM_DELETE_WINDOW", self._hide_window)
+        self.root.bind_all("<Command-q>", lambda _e: self.quit())
+        # macOS app-menu Quit / ⌘Q route here when defined.
+        with_mac_quit = getattr(self.root, "createcommand", None)
+        if with_mac_quit is not None:
+            try:
+                self.root.createcommand("tk::mac::Quit", self.quit)
+            except tk.TclError:
+                pass
+
+    def _poll_signals(self) -> None:
+        if self._shutdown_flag.is_set():
+            self.quit()
+            return
+        if self._raise_flag.is_set():
+            self._raise_flag.clear()
+            self._show_window()
+        self.root.after(_SIGNAL_POLL_MS, self._poll_signals)
+
+    def _hide_window(self) -> None:
+        self.root.withdraw()
+
+    def _show_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def quit(self) -> None:
+        if self._quitting:
+            return
+        self._quitting = True
+        self.stop_services()
+        remove_status_item(self._status_handle)
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)
+            self._lock_fd = None
+        self.root.destroy()
 
 
 class ServicesTab(ttk.Frame):
     COLUMNS = ("status", "pid", "restarts", "exit")
 
-    def __init__(self, master: tk.Misc) -> None:
+    def __init__(self, master: tk.Misc, app: ManagerApp) -> None:
         super().__init__(master, padding=8)
+        self._app = app
 
         self._banner = ttk.Label(self, text="", foreground="#b00")
         self._banner.pack(fill="x", pady=(0, 4))
@@ -58,13 +165,11 @@ class ServicesTab(ttk.Frame):
 
         buttons = ttk.Frame(self)
         buttons.pack(fill="x", pady=(6, 0))
-        self._start_btn = ttk.Button(buttons, text="Start", command=lambda: self._act(admin.start_service))
-        self._stop_btn = ttk.Button(buttons, text="Stop", command=lambda: self._act(admin.stop_service))
-        self._restart_btn = ttk.Button(buttons, text="Restart", command=lambda: self._act(admin.restart_service))
-        self._start_mgr_btn = ttk.Button(buttons, text="Start Manager", command=self._start_manager)
+        self._start_btn = ttk.Button(buttons, text="Start", command=lambda: self._act("start_service"))
+        self._stop_btn = ttk.Button(buttons, text="Stop", command=lambda: self._act("stop_service"))
+        self._restart_btn = ttk.Button(buttons, text="Restart", command=lambda: self._act("restart_service"))
         for btn in (self._start_btn, self._stop_btn, self._restart_btn):
             btn.pack(side="left", padx=(0, 6))
-        self._start_mgr_btn.pack(side="right")
 
         self.refresh()
 
@@ -72,55 +177,54 @@ class ServicesTab(ttk.Frame):
         sel = self._tree.selection()
         return self._tree.item(sel[0], "text") if sel else None
 
-    def _act(self, fn) -> None:
+    def _act(self, method: str) -> None:
+        sm = self._app.service_manager
         name = self._selected()
+        if sm is None or not self._app.running:
+            self._banner.config(text="Services are stopped.")
+            return
         if not name:
             self._banner.config(text="Select a service first.")
             return
         try:
-            fn(name)
+            getattr(sm, method)(name)
             self._banner.config(text="")
-        except admin.AdminError as exc:
+        except KeyError as exc:
             self._banner.config(text=f"Error: {exc}")
         self.refresh(reschedule=False)
 
-    def _start_manager(self) -> None:
-        _start_manager_detached()
-        self._banner.config(text="Starting manager…")
-
     def refresh(self, reschedule: bool = True) -> None:
-        running = manager_running()
-        self._start_mgr_btn.state(["disabled"] if running else ["!disabled"])
+        sm = self._app.service_manager
+        active = self._app.running and sm is not None
         for btn in (self._start_btn, self._stop_btn, self._restart_btn):
-            btn.state(["!disabled"] if running else ["disabled"])
+            btn.state(["!disabled"] if active else ["disabled"])
 
         self._tree.delete(*self._tree.get_children())
-        if not running:
-            self._banner.config(text="Manager is not running.")
+        if not active:
+            self._banner.config(text="Services are stopped (Config tab → Start).")
         else:
-            try:
-                for svc in admin.list_services():
-                    self._tree.insert(
-                        "", "end", text=svc.name,
-                        values=(
-                            svc.status,
-                            svc.pid if svc.pid is not None else "-",
-                            svc.restart_count,
-                            svc.exit_code if svc.exit_code is not None else "-",
-                        ),
-                    )
-                if self._banner.cget("text") in ("Manager is not running.", ""):
-                    self._banner.config(text="")
-            except admin.AdminError as exc:
-                self._banner.config(text=f"Error: {exc}")
+            assert sm is not None
+            for svc in sm.get_status():
+                self._tree.insert(
+                    "", "end", text=str(svc["name"]),
+                    values=(
+                        svc["status"],
+                        svc["pid"] if svc["pid"] is not None else "-",
+                        svc["restart_count"],
+                        svc["exit_code"] if svc["exit_code"] is not None else "-",
+                    ),
+                )
+            if self._banner.cget("text").startswith("Services are stopped"):
+                self._banner.config(text="")
 
         if reschedule:
             self.after(_POLL_MS, self.refresh)
 
 
 class LogsTab(ttk.Frame):
-    def __init__(self, master: tk.Misc) -> None:
+    def __init__(self, master: tk.Misc, app: ManagerApp) -> None:
         super().__init__(master, padding=8)
+        self._app = app
 
         controls = ttk.Frame(self)
         controls.pack(fill="x")
@@ -146,27 +250,26 @@ class LogsTab(ttk.Frame):
         self._tick()
 
     def _populate_services(self) -> None:
-        try:
-            names = [svc.name for svc in admin.list_services()]
-        except admin.AdminError:
-            names = []
+        sm = self._app.service_manager
+        names = sm.service_names() if sm is not None else []
         self._service["values"] = names
         if names and not self._service.get():
             self._service.current(0)
 
     def _tick(self) -> None:
+        sm = self._app.service_manager
         name = self._service.get()
         if not name:
             self._populate_services()
             name = self._service.get()
-        if name:
+        if name and sm is not None:
             try:
                 lines = int(self._lines.get())
             except ValueError:
                 lines = 200
             try:
-                body = admin.service_logs(name, lines)
-            except admin.AdminError as exc:
+                body = _tail_file(sm.get_log_path(name), lines)
+            except KeyError as exc:
                 body = f"[error] {exc}"
             self._set_text(body)
 
@@ -227,15 +330,19 @@ class RoutesTab(ttk.Frame):
 
 
 class ConfigTab(ttk.Frame):
-    def __init__(self, master: tk.Misc, paths: ProjectPaths) -> None:
+    def __init__(self, master: tk.Misc, app: ManagerApp) -> None:
         super().__init__(master, padding=8)
-        self._paths = paths
+        self._app = app
 
         self._banner = ttk.Label(self, text="", foreground="#b00")
         self._banner.pack(fill="x")
 
-        self._stop_btn = ttk.Button(self, text="Stop Manager to Edit", command=self._stop)
-        self._stop_btn.pack(anchor="w", pady=(0, 4))
+        lifecycle = ttk.Frame(self)
+        lifecycle.pack(fill="x", pady=(0, 4))
+        self._stop_btn = ttk.Button(lifecycle, text="Stop to Edit", command=self._stop)
+        self._start_btn = ttk.Button(lifecycle, text="Start", command=self._start)
+        self._stop_btn.pack(side="left", padx=(0, 6))
+        self._start_btn.pack(side="left")
 
         self._text = tk.Text(self, wrap="none", height=22, font=("Menlo", 11))
         self._text.pack(fill="both", expand=True)
@@ -256,7 +363,7 @@ class ConfigTab(ttk.Frame):
 
     def _load_file(self) -> None:
         try:
-            content = self._paths.services_file.read_text()
+            content = self._app.paths.services_file.read_text()
         except OSError as exc:
             content = ""
             self._status.config(text=f"read error: {exc}")
@@ -264,33 +371,38 @@ class ConfigTab(ttk.Frame):
         self._text.insert("1.0", content)
 
     def refresh(self) -> None:
-        running = manager_running()
+        running = self._app.running
         if running:
-            self._banner.config(text="Manager is running — stop it to edit the configuration.")
+            self._banner.config(text="Services are running — stop them to edit the configuration.")
             self._text.config(state="disabled")
             self._stop_btn.state(["!disabled"])
+            self._start_btn.state(["disabled"])
             for btn in (self._validate_btn, self._save_btn):
                 btn.state(["disabled"])
         else:
-            self._banner.config(text="Manager is stopped — edits apply on the next start.")
+            self._banner.config(text="Services are stopped — edit, Save, then Start to apply.")
             self._text.config(state="normal")
             self._stop_btn.state(["disabled"])
+            self._start_btn.state(["!disabled"])
             for btn in (self._validate_btn, self._save_btn):
                 btn.state(["!disabled"])
         self.after(_POLL_MS, self.refresh)
 
     def _stop(self) -> None:
         self._status.config(text="stopping…")
-        if _stop_manager():
-            self._status.config(text="manager stopped")
-        else:
-            self._status.config(text="manager did not stop")
-        self.refresh_now()
+        self._app.stop_services()
+        self._status.config(text="stopped")
+        self.refresh()
 
-    def refresh_now(self) -> None:
-        # one-shot state refresh without waiting for the poll
-        running = manager_running()
-        self._text.config(state="disabled" if running else "normal")
+    def _start(self) -> None:
+        self._status.config(text="starting…")
+        try:
+            self._app.start_services()
+        except Exception as exc:  # config may be invalid at start time
+            self._status.config(text=f"start failed: {exc}", foreground="#b00")
+            return
+        self._status.config(text="started ✓", foreground="#070")
+        self.refresh()
 
     def _validate(self) -> bool:
         text = self._text.get("1.0", "end-1c")
@@ -304,14 +416,14 @@ class ConfigTab(ttk.Frame):
         return True
 
     def _save(self) -> None:
-        if manager_running():
-            self._status.config(text="stop the manager first", foreground="#b00")
+        if self._app.running:
+            self._status.config(text="stop services first", foreground="#b00")
             return
         if not self._validate():
             return
         text = self._text.get("1.0", "end-1c")
         try:
-            self._paths.services_file.write_text(text)
+            self._app.paths.services_file.write_text(text)
         except OSError as exc:
             self._status.config(text=f"write error: {exc}", foreground="#b00")
             return
@@ -320,17 +432,17 @@ class ConfigTab(ttk.Frame):
 
 def run_gui() -> None:
     paths = ensure_config()
+    lock_fd = _acquire_lock()
 
     root = tk.Tk()
     root.title("Local Dev Proxy — Manager")
-    root.geometry("720x520")
+    root.geometry("760x560")
 
-    notebook = ttk.Notebook(root)
-    notebook.pack(fill="both", expand=True)
-
-    notebook.add(ServicesTab(notebook), text="Services")
-    notebook.add(LogsTab(notebook), text="Logs")
-    notebook.add(RoutesTab(notebook, paths), text="Routes")
-    notebook.add(ConfigTab(notebook, paths), text="Config")
+    app = ManagerApp(root, paths, lock_fd)
+    app.start_services()
+    app.build_ui()
+    app.install_icon()
+    app.wire_lifecycle()
+    app.install_signals()
 
     root.mainloop()

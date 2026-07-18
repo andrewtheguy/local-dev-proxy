@@ -38,10 +38,11 @@ uv sync
 uv run local-dev-proxy
 ```
 
-Running `uv run local-dev-proxy` with no arguments **starts the manager detached** (it
-returns your terminal immediately) and opens the **manager window**. The manager runs an
-in-process reverse proxy, manages service processes, and shows a macOS menu bar icon.
-Run it again to reopen the manager window.
+`uv run local-dev-proxy` **starts the app detached** (it returns your terminal
+immediately) and opens the **manager window**. It is a single process: the Tkinter
+window owns the in-process reverse proxy and the service processes and calls them
+directly — there is no background admin port or IPC. A macOS menu-bar icon appears; click
+it to bring the window back. Running the command again just raises the existing window.
 
 ### Manager window
 
@@ -51,18 +52,19 @@ A Tkinter window with four tabs:
   Start / Stop / Restart buttons.
 - **Logs** — view or follow (tail) any service's log.
 - **Routes** — every service URL; double-click to open it in your browser.
-- **Config** — edit `services.toml`, Validate, and Save. Editing is locked while the
-  manager is running; use *Stop Manager* first. Changes apply on the next start.
+- **Config** — edit `services.toml`, Validate, and Save. The proxy and services must be
+  stopped to edit: use **Stop to Edit**, make your change, Save, then **Start** to apply
+  it live (no app restart needed).
 
-### Lifecycle commands
+### Lifecycle
 
-```sh
-uv run local-dev-proxy                 # Start detached + open the manager window
-uv run local-dev-proxy gui             # Just open the manager window
-uv run local-dev-proxy stop-manager    # Stop the running manager
-uv run local-dev-proxy restart-manager # Restart the manager (detached)
-uv run local-dev-proxy start-manager -f  # Run the manager in the foreground (blocking)
-```
+- **Close the window** → it hides to the menu-bar icon; the proxy and services keep
+  running. Click the icon (or re-run `uv run local-dev-proxy`) to reopen it.
+- **Quit** (the in-window *Quit* button or ⌘Q) → stops the proxy, stops all managed
+  services, and exits the app.
+
+`uv run local-dev-proxy --foreground` runs the app in the foreground (blocking) instead of
+detaching — this is what the detached launcher and a packaged build use internally.
 
 ## How to add a service
 
@@ -110,5 +112,5 @@ The bundled defaults live in `src/local_dev_proxy/services.toml.sample`.
 - **Service URL not proxying:** open the manager window's **Services** tab to check the
   service state, and confirm the port is set in `services.toml`.
 - **Proxy not responding:** check `~/.config/local-dev-proxy/logs/manager.log` for
-  startup errors. Restart with `uv run local-dev-proxy restart-manager`.
+  startup errors. Quit from the window (or ⌘Q), then run `uv run local-dev-proxy` again.
 - **View service logs:** use the **Logs** tab (with *Follow* for a live tail).

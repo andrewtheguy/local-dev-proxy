@@ -12,7 +12,6 @@ from aiohttp.test_utils import TestClient, TestServer
 from local_dev_proxy.proxy import (
     ResolvedRoute,
     RouteTable,
-    make_admin_app,
     make_proxy_app,
     resolve_routes,
 )
@@ -622,31 +621,3 @@ async def test_proxy_502_when_upstream_down(aiohttp_client: type) -> None:
 
     resp = await client.get("/", headers={"Host": "dead.localhost"})
     assert resp.status == 502
-
-
-# --- Admin app tests ---
-
-
-async def test_admin_healthz(aiohttp_client: type, tmp_path: Path) -> None:
-    path = _write_manifest(tmp_path)
-    rt = RouteTable()
-    admin_app = make_admin_app(rt, path)
-    client = await aiohttp_client(admin_app)
-
-    resp = await client.get("/healthz")
-    assert resp.status == 200
-    assert await resp.text() == "ok"
-
-
-async def test_admin_reload(aiohttp_client: type, tmp_path: Path) -> None:
-    path = _write_manifest(tmp_path)
-    rt = RouteTable()
-    admin_app = make_admin_app(rt, path)
-    client = await aiohttp_client(admin_app)
-
-    resp = await client.post("/reload")
-    assert resp.status == 200
-    assert await resp.text() == "reloaded"
-
-    # Verify routes were actually loaded
-    assert len(rt.routes) == 3

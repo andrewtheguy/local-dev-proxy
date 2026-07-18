@@ -20,10 +20,7 @@ def start_services_managed(paths: ProjectPaths | None = None) -> ServiceManager:
     )
 
 
-def start_proxy(
-    paths: ProjectPaths | None = None,
-    service_manager: ServiceManager | None = None,
-) -> ProxyServer:
+def start_proxy(paths: ProjectPaths | None = None) -> ProxyServer:
     resolved_paths = paths or get_paths()
     manifest = _load_manifest(resolved_paths)
 
@@ -31,7 +28,6 @@ def start_proxy(
         services_file=resolved_paths.services_file,
         http_port=manifest.http_port,
         bind=manifest.bind,
-        service_manager=service_manager,
     )
     server.start()
     return server
