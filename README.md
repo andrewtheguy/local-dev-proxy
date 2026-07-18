@@ -4,7 +4,20 @@ Local dev proxy: built-in reverse proxy + process manager with a macOS menu bar 
 
 macOS only (the menu-bar item and manager UI rely on macOS/pyobjc).
 
-### Install from GitHub Pages package index (recommended)
+### Install from a release wheel (recommended)
+
+Install directly from a release asset URL — no checkout, no index config. Grab the wheel
+URL from the [Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
+
+```shell
+uv tool install https://github.com/andrewtheguy/local-dev-proxy/releases/download/v0.0.1/local_dev_proxy-0.0.1-py3-none-any.whl
+```
+
+Then run it with `local-dev-proxy`.
+
+### Install from the GitHub Pages package index
+
+Lets you pin by version instead of pasting a wheel URL:
 
 ```shell
 uv tool install \
@@ -12,9 +25,18 @@ uv tool install \
   'local-dev-proxy==x.x.x'
 ```
 
-Then run it with `local-dev-proxy`.
+### Install from a local checkout
 
-### Install from source
+Installs the current working tree as a global tool so `local-dev-proxy` is on your PATH
+(works without a published release):
+
+```shell
+uv tool install .
+```
+
+Re-run with `uv tool install --reinstall .` to pick up local changes.
+
+### Install from source (git)
 ```shell
 uv tool install git+https://github.com/andrewtheguy/local-dev-proxy.git@(tag or branch)
 ```
