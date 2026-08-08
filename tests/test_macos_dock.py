@@ -14,10 +14,46 @@ def test_set_dock_icon_visible_is_noop_off_macos(
     assert macos_dock.set_dock_icon_visible(False) is False
 
 
+def _forbid_objc(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(_name: str) -> str:
+        raise AssertionError("the Objective-C runtime must not be touched")
+
+    monkeypatch.setattr(macos_dock.ctypes.util, "find_library", fail)
+
+
+@pytest.mark.parametrize("platform", ["offscreen", "minimal", "offscreen;cocoa"])
+def test_set_dock_icon_visible_is_noop_under_headless_qt(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+) -> None:
+    # Registering a headless process with the window server leaves a ghost
+    # "Python" Dock tile that not even Force Quit can remove.
+    monkeypatch.setattr(macos_dock.sys, "platform", "darwin")
+    monkeypatch.setenv("QT_QPA_PLATFORM", platform)
+    _forbid_objc(monkeypatch)
+
+    assert macos_dock.set_dock_icon_visible(True) is False
+    assert macos_dock.set_dock_icon_visible(False) is False
+
+
+@pytest.mark.parametrize("platform", [None, "cocoa", "cocoa:option"])
+def test_qt_platform_is_cocoa_for_gui_launches(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str | None,
+) -> None:
+    if platform is None:
+        monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    else:
+        monkeypatch.setenv("QT_QPA_PLATFORM", platform)
+
+    assert macos_dock._qt_platform_is_cocoa() is True
+
+
 def test_set_dock_icon_visible_reports_failure_without_objc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(macos_dock.sys, "platform", "darwin")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "cocoa")
     monkeypatch.setattr(macos_dock.ctypes.util, "find_library", lambda _name: None)
 
     assert macos_dock.set_dock_icon_visible(True) is False
@@ -27,6 +63,7 @@ def test_set_dock_icon_visible_swallows_runtime_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(macos_dock.sys, "platform", "darwin")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "cocoa")
 
     def boom(_name: str) -> str:
         raise OSError("objc runtime unavailable")
@@ -77,6 +114,7 @@ def test_set_dock_icon_visible_sends_expected_policy(
 ) -> None:
     sent: list[int] = []
     monkeypatch.setattr(macos_dock.sys, "platform", "darwin")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "cocoa")
     monkeypatch.setattr(macos_dock.ctypes.util, "find_library", lambda _name: "libobjc")
     monkeypatch.setattr(macos_dock.ctypes, "CDLL", lambda _path: _FakeObjc(sent))
 
