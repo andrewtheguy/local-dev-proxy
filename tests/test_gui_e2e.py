@@ -12,11 +12,13 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPlainTextEdit, QSystemTrayIcon
 
 from local_dev_proxy import config as config_module
+from local_dev_proxy import gui as gui_module
 from local_dev_proxy.config import ProjectPaths
 from local_dev_proxy.gui import (
     ManagerController,
     ManagerWindow,
     _tail_file,
+    _tray_icon,
     _TomlSyntaxHighlighter,
 )
 from local_dev_proxy.routes import load_routes
@@ -355,36 +357,44 @@ def test_manual_start_service_is_skipped_at_launch_but_startable(
         controller.quit()
 
 
-def test_macos_tray_icon_is_white_with_identical_alpha_mask() -> None:
-    original = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"))
-    macos = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon-macos.png"))
-    assert not original.isNull()
-    assert not macos.isNull()
-    assert macos.size() == original.size()
+def test_tray_icon_asset_carries_the_glyph_in_its_alpha_channel() -> None:
+    # A macOS template image is tinted from its alpha, so every painted pixel
+    # must be fully opaque and no shape may be implied by color alone.
+    image = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"))
+    assert not image.isNull()
 
     opaque_pixels = 0
-    for y in range(original.height()):
-        for x in range(original.width()):
-            original_color = original.pixelColor(x, y)
-            macos_color = macos.pixelColor(x, y)
-            assert macos_color.alpha() == original_color.alpha()
-            if macos_color.alpha():
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            assert color.alpha() in (0, 255)
+            if color.alpha():
                 opaque_pixels += 1
-                assert macos_color.red() == 255
-                assert macos_color.green() == 255
-                assert macos_color.blue() == 255
+                assert (color.red(), color.green(), color.blue()) == (0, 0, 0)
     assert opaque_pixels == 546
 
 
-def test_macos_selects_white_tray_icon(
+def test_macos_tray_icon_is_a_template_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    asset = PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"
+
+    monkeypatch.setattr(gui_module.sys, "platform", "darwin")
+    assert _tray_icon(asset).isMask()
+
+    # Elsewhere the glyph is painted as authored.
+    monkeypatch.setattr(gui_module.sys, "platform", "linux")
+    assert not _tray_icon(asset).isMask()
+
+
+def test_tray_icon_is_platform_independent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("LOCAL_DEV_PROXY_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setattr(config_module.sys, "platform", "darwin")
+    expected = PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"
+
     selected = config_module.icon_path()
-    expected = PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon-macos.png"
+
     assert selected is not None
-    assert selected.name == "tray-icon-macos.png"
+    assert selected.name == "tray-icon.png"
     assert selected.read_bytes() == expected.read_bytes()
 
 

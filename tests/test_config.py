@@ -70,14 +70,9 @@ def test_ensure_profile_does_not_replace_an_existing_config(tmp_path: Path) -> N
     assert paths.services_file.read_text() == existing
 
 
-def test_icon_cache_uses_the_injected_profile_directory(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(config.sys, "platform", "darwin")
-
+def test_icon_cache_uses_the_injected_profile_directory(tmp_path: Path) -> None:
     paths = ProjectPaths(tmp_path)
     selected = config.icon_path(paths)
 
-    assert selected == tmp_path / "tray-icon-macos.png"
+    assert selected == tmp_path / "tray-icon.png"
     assert selected.is_file()

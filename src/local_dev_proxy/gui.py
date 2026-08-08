@@ -180,6 +180,21 @@ def _icon(path: Path | None) -> QIcon:
     return icon
 
 
+def _tray_icon(path: Path | None) -> QIcon:
+    """Return the menu-bar icon, marked as a template image on macOS.
+
+    macOS expects a menu bar extra to supply only a shape; AppKit then tints it
+    for the current appearance (dark glyph on a light menu bar, light glyph on a
+    dark one, inverted while the menu is open). Qt requests that treatment via
+    ``QIcon.setIsMask``. Without it the fixed-color glyph is kept as painted and
+    disappears against menu bars of the same shade.
+    """
+    icon = _icon(path)
+    if sys.platform == "darwin":
+        icon.setIsMask(True)
+    return icon
+
+
 def _monospace_font(
     point_size: int | None = None, weight: QFont.Weight | None = None
 ) -> QFont:
@@ -827,7 +842,7 @@ class ManagerController:
         self._shutdown_flag = threading.Event()
 
         self.window = ManagerWindow(_icon(dock_icon_path(paths)))
-        self.tray = QSystemTrayIcon(_icon(icon_path(paths)), self.window)
+        self.tray = QSystemTrayIcon(_tray_icon(icon_path(paths)), self.window)
         self.tray.setObjectName("system_tray")
         self.tray.setToolTip("Local Dev Proxy")
         self.tray_menu = QMenu()
