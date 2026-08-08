@@ -61,6 +61,8 @@ class ServiceInfo:
     command: list[str] | None
     env: dict[str, str]
     managed: bool = True
+    # False keeps the service startable from the UI but skips it in start_all.
+    auto_start: bool = True
     status: str = "stopped"  # running | stopped | crashed | unmanaged | disabled
     pid: int | None = None
     exit_code: int | None = None
@@ -116,12 +118,13 @@ class ServiceManager:
                     name=name,
                     command=command,
                     env=runtime_env,
+                    auto_start=service_def.auto_start,
                 )
 
     def start_all(self) -> None:
         with self._lock:
             for name, info in self._services.items():
-                if info.managed:
+                if info.managed and info.auto_start:
                     self._start_service_locked(name)
         self._start_monitor()
 

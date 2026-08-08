@@ -70,6 +70,17 @@ target_port_env = "INHERITED_PORT"
 command = ["my-worker", "run"]
 env = {QUEUE = "development"}
 
+# Managed service that is not launched with the others. It stays selectable in
+# the Services tab, where Start runs it on demand.
+[services.on_demand]
+command = ["my-on-demand-app", "--port", "9100"]
+auto_start = false
+
+[[services.on_demand.routes]]
+id = "on-demand"
+hosts = ["on-demand.localhost"]
+target_port = 9100
+
 # Keep optional configuration visible without starting its process or routes.
 [services.optional_service]
 command = ["my-optional-service", "--port", "9000"]

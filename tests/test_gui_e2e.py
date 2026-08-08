@@ -12,11 +12,13 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QPlainTextEdit, QSystemTrayIcon
 
 from local_dev_proxy import config as config_module
+from local_dev_proxy import gui as gui_module
 from local_dev_proxy.config import ProjectPaths
 from local_dev_proxy.gui import (
     ManagerController,
     ManagerWindow,
     _tail_file,
+    _tray_icon,
     _TomlSyntaxHighlighter,
 )
 from local_dev_proxy.routes import load_routes
@@ -32,6 +34,7 @@ class _FakeService:
     name: str
     managed: bool
     disabled: bool
+    auto_start: bool
     status: str
     pid: int | None
     exit_code: int | None = None
@@ -52,14 +55,18 @@ class FakeServiceManager:
                 status = "disabled"
             elif service.command is None:
                 status = "unmanaged"
+            elif not service.auto_start:
+                status = "stopped"
             else:
                 status = "running"
+            started = status == "running"
             self._services[service.name] = _FakeService(
                 name=service.name,
                 managed=managed,
                 disabled=service.disabled,
+                auto_start=service.auto_start,
                 status=status,
-                pid=42000 + offset if managed else None,
+                pid=42000 + offset if started else None,
             )
             log = self.get_log_path(service.name)
             log.write_text(
@@ -71,7 +78,7 @@ class FakeServiceManager:
 
     def start_all(self) -> None:
         for offset, service in enumerate(self._services.values()):
-            if service.managed:
+            if service.managed and service.auto_start:
                 service.status = "running"
                 service.pid = 42000 + offset
                 service.exit_code = None
@@ -271,36 +278,123 @@ def test_missing_config_opens_an_empty_new_configuration_editor(
         controller.quit()
 
 
-def test_macos_tray_icon_is_white_with_identical_alpha_mask() -> None:
-    original = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"))
-    macos = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon-macos.png"))
-    assert not original.isNull()
-    assert not macos.isNull()
-    assert macos.size() == original.size()
+MANUAL_START_TOML = """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.eager]
+command = ["eager-server"]
+
+[[services.eager.routes]]
+id = "eager"
+hosts = ["eager.localhost"]
+target_port = 3000
+
+[services.manual]
+command = ["manual-server"]
+auto_start = false
+
+[[services.manual.routes]]
+id = "manual"
+hosts = ["manual.localhost"]
+target_port = 3001
+"""
+
+
+def test_manual_start_service_is_skipped_at_launch_but_startable(
+    qtbot: object,
+    tmp_path: Path,
+) -> None:
+    paths = ProjectPaths(tmp_path / "manual-profile")
+    paths.root.mkdir(parents=True)
+    paths.services_file.write_text(MANUAL_START_TOML)
+    controller = ManagerController(
+        paths,
+        application=QApplication.instance(),
+        service_factory=FakeServiceManager,
+        proxy_factory=lambda _paths: FakeProxy(),
+    )
+    qtbot.addWidget(controller.window)
+    try:
+        controller.start_services()
+        controller.prime()
+        controller.window.show()
+        qtbot.waitUntil(controller.window.isVisible, timeout=2000)
+
+        window = controller.window
+        manual_row = _find_service_row(controller, "manual")
+        assert window.service_model.index(manual_row, 1).data() == "stopped"
+        assert (
+            window.service_model.index(_find_service_row(controller, "eager"), 1).data()
+            == "running"
+        )
+
+        # Its routes stay listed, flagged so they are not read as live.
+        labels = [
+            str(window.route_model.index(row, 0).data())
+            for row in range(window.route_model.rowCount())
+        ]
+        assert "manual  (manual start — not started with the others)" in labels
+        assert "eager" in labels
+
+        service_index = window.service_model.index(manual_row, 0)
+        window.service_tree.scrollTo(service_index)
+        QTest.mouseClick(
+            window.service_tree.viewport(),
+            Qt.MouseButton.LeftButton,
+            pos=window.service_tree.visualRect(service_index).center(),
+        )
+        qtbot.waitUntil(window.start_service_button.isEnabled)
+        qtbot.mouseClick(window.start_service_button, Qt.MouseButton.LeftButton)
+
+        assert (
+            window.service_model.index(
+                _find_service_row(controller, "manual"), 1
+            ).data()
+            == "running"
+        )
+    finally:
+        controller.quit()
+
+
+def test_tray_icon_asset_carries_the_glyph_in_its_alpha_channel() -> None:
+    # A macOS template image is tinted from its alpha, so every painted pixel
+    # must be fully opaque and no shape may be implied by color alone.
+    image = QImage(str(PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"))
+    assert not image.isNull()
 
     opaque_pixels = 0
-    for y in range(original.height()):
-        for x in range(original.width()):
-            original_color = original.pixelColor(x, y)
-            macos_color = macos.pixelColor(x, y)
-            assert macos_color.alpha() == original_color.alpha()
-            if macos_color.alpha():
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            assert color.alpha() in (0, 255)
+            if color.alpha():
                 opaque_pixels += 1
-                assert macos_color.red() == 255
-                assert macos_color.green() == 255
-                assert macos_color.blue() == 255
+                assert (color.red(), color.green(), color.blue()) == (0, 0, 0)
     assert opaque_pixels == 546
 
 
-def test_macos_selects_white_tray_icon(
+def test_macos_tray_icon_is_a_template_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    asset = PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"
+
+    monkeypatch.setattr(gui_module.sys, "platform", "darwin")
+    assert _tray_icon(asset).isMask()
+
+    # Elsewhere the glyph is painted as authored.
+    monkeypatch.setattr(gui_module.sys, "platform", "linux")
+    assert not _tray_icon(asset).isMask()
+
+
+def test_tray_icon_is_platform_independent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("LOCAL_DEV_PROXY_CONFIG_DIR", str(tmp_path))
-    monkeypatch.setattr(config_module.sys, "platform", "darwin")
+    expected = PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon.png"
+
     selected = config_module.icon_path()
-    expected = PROJECT_ROOT / "src/local_dev_proxy/assets/tray-icon-macos.png"
+
     assert selected is not None
-    assert selected.name == "tray-icon-macos.png"
+    assert selected.name == "tray-icon.png"
     assert selected.read_bytes() == expected.read_bytes()
 
 

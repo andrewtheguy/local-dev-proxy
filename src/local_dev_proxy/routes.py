@@ -7,7 +7,7 @@ import tomllib
 from collections.abc import Mapping
 
 _TOP_LEVEL_KEYS = frozenset({"http_port", "bind", "services"})
-_SERVICE_KEYS = frozenset({"command", "env", "routes", "disabled"})
+_SERVICE_KEYS = frozenset({"command", "env", "routes", "disabled", "auto_start"})
 _ROUTE_KEYS = frozenset(
     {
         "id",
@@ -44,6 +44,7 @@ class ServiceDef:
     env: dict[str, str] = field(default_factory=dict)
     routes: list[ServiceRoute] = field(default_factory=list)
     disabled: bool = False
+    auto_start: bool = True
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,14 @@ def _build_manifest(data: dict[str, object]) -> RoutesManifest:
         disabled = raw.get("disabled", False)
         if not isinstance(disabled, bool):
             raise RouteConfigError(f"{prefix}.disabled must be a boolean")
+
+        auto_start = raw.get("auto_start", True)
+        if not isinstance(auto_start, bool):
+            raise RouteConfigError(f"{prefix}.auto_start must be a boolean")
+        if "auto_start" in raw and parsed_command is None:
+            raise RouteConfigError(
+                f"{prefix}.auto_start requires command; there is nothing to start"
+            )
 
         raw_routes = raw.get("routes", [])
         if not isinstance(raw_routes, list):
@@ -207,6 +216,7 @@ def _build_manifest(data: dict[str, object]) -> RoutesManifest:
             env=env,
             routes=routes,
             disabled=disabled,
+            auto_start=auto_start,
         )
 
     return RoutesManifest(

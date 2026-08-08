@@ -6,7 +6,6 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 import os
 import shutil
-import sys
 from collections.abc import Mapping
 
 from filelock import FileLock, Timeout
@@ -16,7 +15,6 @@ _APP_NAME = "local-dev-proxy"
 _ORGANIZATION_NAME = "andrewtheguy"
 _ORGANIZATION_DOMAIN = "andrewtheguy.com"
 _ICON_RESOURCE = "assets/tray-icon.png"
-_MACOS_ICON_RESOURCE = "assets/tray-icon-macos.png"
 _DOCK_ICON_RESOURCE = "assets/dock-icon.png"
 
 
@@ -144,13 +142,11 @@ def _cached_icon(
 
 
 def icon_path(paths: ProjectPaths | None = None) -> Path | None:
-    """Return a filesystem path to the bundled system-tray icon, or None."""
-    if sys.platform == "darwin":
-        return _cached_icon(
-            _MACOS_ICON_RESOURCE,
-            "tray-icon-macos.png",
-            paths,
-        )
+    """Return a filesystem path to the bundled system-tray icon, or None.
+
+    The glyph is solid black over transparency, which is also the shape macOS
+    needs for a template image (see ``gui._tray_icon``).
+    """
     return _cached_icon(_ICON_RESOURCE, "tray-icon.png", paths)
 
 
