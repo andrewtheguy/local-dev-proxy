@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
-from fnmatch import fnmatch
+import fnmatch
 import html
 import logging
 import os
+import re
 import threading
 from pathlib import Path
 from collections.abc import Mapping
@@ -111,10 +112,46 @@ def resolve_routes(
     return resolved
 
 
+class _HostMatcher:
+    """Immutable matcher precompiled from a route list.
+
+    Exact hostnames resolve via a single dict lookup; wildcard patterns fall
+    back to precompiled regexes in route order. Exact matches win over
+    wildcards regardless of declaration order.
+    """
+
+    __slots__ = ("routes", "_exact", "_wildcards")
+
+    def __init__(self, routes: list[ResolvedRoute]) -> None:
+        self.routes = routes
+        self._exact: dict[str, ResolvedRoute] = {}
+        self._wildcards: list[tuple[re.Pattern[str], ResolvedRoute]] = []
+        for route in routes:
+            for pattern in route.host_patterns:
+                pattern = pattern.lower()
+                if any(ch in pattern for ch in "*?["):
+                    self._wildcards.append(
+                        (re.compile(fnmatch.translate(pattern)), route)
+                    )
+                else:
+                    self._exact.setdefault(pattern, route)
+
+    def match(self, host: str) -> ResolvedRoute | None:
+        host = host.lower()
+        route = self._exact.get(host)
+        if route is not None:
+            return route
+        for pattern, wildcard_route in self._wildcards:
+            if pattern.match(host):
+                return wildcard_route
+        return None
+
+
 class RouteTable:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._routes: list[ResolvedRoute] = []
+        self._matcher: _HostMatcher | None = None
         self._portal_html: str = ""
 
     @property
@@ -124,8 +161,7 @@ class RouteTable:
 
     @property
     def portal_html(self) -> str:
-        with self._lock:
-            return self._portal_html
+        return self._portal_html
 
     def reload(self, services_file: Path, env: Mapping[str, str] | None = None) -> None:
         manifest = load_routes(services_file)
@@ -133,17 +169,24 @@ class RouteTable:
             manifest, env, socket_base_dir=services_file.resolve().parent
         )
         portal = _build_portal_html(manifest, routes)
+        matcher = _HostMatcher(routes)
         with self._lock:
             self._routes = routes
+            self._matcher = matcher
             self._portal_html = portal
 
     def match(self, host: str) -> ResolvedRoute | None:
-        with self._lock:
-            for route in self._routes:
-                for pattern in route.host_patterns:
-                    if fnmatch(host, pattern):
-                        return route
-        return None
+        # Lock-free fast path: the matcher is an immutable snapshot swapped
+        # atomically on reload. Rebuild only if _routes was replaced without
+        # going through reload().
+        matcher = self._matcher
+        if matcher is None or matcher.routes is not self._routes:
+            with self._lock:
+                matcher = self._matcher
+                if matcher is None or matcher.routes is not self._routes:
+                    matcher = _HostMatcher(self._routes)
+                    self._matcher = matcher
+        return matcher.match(host)
 
 
 def _build_portal_html(manifest: RoutesManifest, routes: list[ResolvedRoute]) -> str:
@@ -223,9 +266,57 @@ def _get_websocket_error_detail(msg: aiohttp.WSMessage) -> object:
     return msg.data if msg.data is not None else msg.extra
 
 
+class _UpstreamSessions:
+    """Long-lived client sessions keyed by upstream target.
+
+    One shared session (with keep-alive connection pooling) covers all TCP
+    routes; each Unix socket gets its own session since the connector is
+    bound to the socket path. Sessions are created lazily on first use and
+    closed when the proxy app shuts down.
+    """
+
+    # Never time out the overall request: proxied responses may stream
+    # (SSE, long polls) indefinitely. Only bound the connect itself.
+    _TIMEOUT = aiohttp.ClientTimeout(total=None, sock_connect=30)
+
+    def __init__(self) -> None:
+        self._sessions: dict[str | None, aiohttp.ClientSession] = {}
+
+    def get(self, route: ResolvedRoute) -> aiohttp.ClientSession:
+        key = route.target_socket
+        session = self._sessions.get(key)
+        if session is None or session.closed:
+            connector = (
+                aiohttp.UnixConnector(path=key)
+                if key is not None
+                else aiohttp.TCPConnector(limit=512, limit_per_host=256)
+            )
+            session = aiohttp.ClientSession(
+                connector=connector,
+                timeout=self._TIMEOUT,
+                auto_decompress=False,
+            )
+            self._sessions[key] = session
+        return session
+
+    async def close(self) -> None:
+        sessions = list(self._sessions.values())
+        self._sessions.clear()
+        await asyncio.gather(
+            *(session.close() for session in sessions), return_exceptions=True
+        )
+
+
 def make_proxy_app(route_table: RouteTable) -> web.Application:
-    app = web.Application(client_max_size=100 * 1024 * 1024)  # 100MB
+    app = web.Application()
     app["route_table"] = route_table
+    sessions = _UpstreamSessions()
+    app["upstream_sessions"] = sessions
+
+    async def _close_sessions(_: web.Application) -> None:
+        await sessions.close()
+
+    app.on_cleanup.append(_close_sessions)
     app.router.add_route("*", "/{path_info:.*}", _proxy_handler)
     return app
 
@@ -281,44 +372,45 @@ def _is_websocket_upgrade(request: web.Request) -> bool:
     return upgrade == "websocket"
 
 
-def _client_session(route: ResolvedRoute) -> aiohttp.ClientSession:
-    connector = (
-        aiohttp.UnixConnector(path=route.target_socket)
-        if route.target_socket is not None
-        else None
-    )
-    return aiohttp.ClientSession(connector=connector)
-
-
 async def _proxy_http(
     request: web.Request, target_url: str, route: ResolvedRoute
 ) -> web.StreamResponse:
+    sessions: _UpstreamSessions = request.app["upstream_sessions"]
+    session = sessions.get(route)
     headers = _filter_headers(request.headers)
-    body = await request.read()
+    body = request.content if request.can_read_body else None
 
-    async with _client_session(route) as session:
-        try:
-            async with session.request(
-                request.method,
-                target_url,
-                headers=headers,
-                data=body,
-                allow_redirects=False,
-            ) as upstream:
-                response_headers = _filter_headers(upstream.headers)
-                resp = web.StreamResponse(
-                    status=upstream.status,
-                    headers=response_headers,
-                )
-                await resp.prepare(request)
+    resp: web.StreamResponse | None = None
+    try:
+        async with session.request(
+            request.method,
+            target_url,
+            headers=headers,
+            data=body,
+            allow_redirects=False,
+        ) as upstream:
+            response_headers = _filter_headers(upstream.headers)
+            resp = web.StreamResponse(
+                status=upstream.status,
+                headers=response_headers,
+            )
+            await resp.prepare(request)
 
-                async for chunk in upstream.content.iter_any():
-                    await resp.write(chunk)
-                await resp.write_eof()
-                return resp
-        except aiohttp.ClientError as exc:
-            logger.debug("Upstream error for %s: %s", target_url, exc)
+            async for chunk in upstream.content.iter_any():
+                await resp.write(chunk)
+            await resp.write_eof()
+            return resp
+    except aiohttp.ClientError as exc:
+        logger.debug("Upstream error for %s: %s", target_url, exc)
+        if resp is None:
             return web.Response(status=502, text="Bad Gateway")
+        # The response already started streaming; a 502 can no longer be
+        # sent. Drop the connection so the client sees a truncated response
+        # rather than a complete-looking one.
+        resp.force_close()
+        if request.transport is not None:
+            request.transport.close()
+        return resp
 
 
 async def _proxy_websocket(
@@ -327,94 +419,107 @@ async def _proxy_websocket(
     ws_target = target_url.replace("http://", "ws://", 1).replace(
         "https://", "wss://", 1
     )
+    sessions: _UpstreamSessions = request.app["upstream_sessions"]
+    session = sessions.get(route)
     try:
-        async with _client_session(route) as session:
-            ws_headers = _filter_websocket_headers(request.headers)
-            ws_protocols = _get_websocket_protocols(request)
-            async with session.ws_connect(
-                ws_target,
-                headers=ws_headers,
-                origin=request.headers.get("Origin"),
-                protocols=ws_protocols,
-                autoclose=False,
-            ) as ws_upstream:
-                response_protocols = (
-                    (ws_upstream.protocol,) if ws_upstream.protocol else ()
-                )
-                ws_response = web.WebSocketResponse(
-                    protocols=response_protocols, autoclose=False
-                )
-                await ws_response.prepare(request)
+        ws_headers = _filter_websocket_headers(request.headers)
+        ws_protocols = _get_websocket_protocols(request)
+        async with session.ws_connect(
+            ws_target,
+            headers=ws_headers,
+            origin=request.headers.get("Origin"),
+            protocols=ws_protocols,
+            autoclose=False,
+        ) as ws_upstream:
+            response_protocols = (ws_upstream.protocol,) if ws_upstream.protocol else ()
+            ws_response = web.WebSocketResponse(
+                protocols=response_protocols, autoclose=False
+            )
+            await ws_response.prepare(request)
 
-                async def _forward_client_to_upstream() -> tuple[str, int, bytes]:
-                    while True:
-                        msg = await ws_response.receive()
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            await ws_upstream.send_str(msg.data)
-                        elif msg.type == aiohttp.WSMsgType.BINARY:
-                            await ws_upstream.send_bytes(msg.data)
-                        elif msg.type in (
-                            aiohttp.WSMsgType.CLOSE,
-                            aiohttp.WSMsgType.CLOSING,
-                        ):
-                            code, message = _get_websocket_close_args(msg)
-                            return ("upstream", code, message)
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            logger.warning(
-                                "WebSocket client error: %r",
-                                _get_websocket_error_detail(msg),
-                            )
-                            return ("both", aiohttp.WSCloseCode.INTERNAL_ERROR, b"")
-                        elif msg.type == aiohttp.WSMsgType.CLOSED:
-                            return ("upstream", aiohttp.WSCloseCode.OK, b"")
+            async def _forward_client_to_upstream() -> tuple[str, int, bytes]:
+                while True:
+                    msg = await ws_response.receive()
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        await ws_upstream.send_str(msg.data)
+                    elif msg.type == aiohttp.WSMsgType.BINARY:
+                        await ws_upstream.send_bytes(msg.data)
+                    elif msg.type in (
+                        aiohttp.WSMsgType.CLOSE,
+                        aiohttp.WSMsgType.CLOSING,
+                    ):
+                        code, message = _get_websocket_close_args(msg)
+                        return ("upstream", code, message)
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        logger.warning(
+                            "WebSocket client error: %r",
+                            _get_websocket_error_detail(msg),
+                        )
+                        return ("both", aiohttp.WSCloseCode.INTERNAL_ERROR, b"")
+                    elif msg.type == aiohttp.WSMsgType.CLOSED:
+                        return ("upstream", aiohttp.WSCloseCode.OK, b"")
 
-                async def _forward_upstream_to_client() -> tuple[str, int, bytes]:
-                    while True:
-                        msg = await ws_upstream.receive()
-                        if msg.type == aiohttp.WSMsgType.TEXT:
-                            await ws_response.send_str(msg.data)
-                        elif msg.type == aiohttp.WSMsgType.BINARY:
-                            await ws_response.send_bytes(msg.data)
-                        elif msg.type in (
-                            aiohttp.WSMsgType.CLOSE,
-                            aiohttp.WSMsgType.CLOSING,
-                        ):
-                            code, message = _get_websocket_close_args(msg)
-                            return ("client", code, message)
-                        elif msg.type == aiohttp.WSMsgType.ERROR:
-                            logger.warning(
-                                "WebSocket upstream error: %r",
-                                _get_websocket_error_detail(msg),
-                            )
-                            return ("both", aiohttp.WSCloseCode.INTERNAL_ERROR, b"")
-                        elif msg.type == aiohttp.WSMsgType.CLOSED:
-                            return ("client", aiohttp.WSCloseCode.OK, b"")
+            async def _forward_upstream_to_client() -> tuple[str, int, bytes]:
+                while True:
+                    msg = await ws_upstream.receive()
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        await ws_response.send_str(msg.data)
+                    elif msg.type == aiohttp.WSMsgType.BINARY:
+                        await ws_response.send_bytes(msg.data)
+                    elif msg.type in (
+                        aiohttp.WSMsgType.CLOSE,
+                        aiohttp.WSMsgType.CLOSING,
+                    ):
+                        code, message = _get_websocket_close_args(msg)
+                        return ("client", code, message)
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        logger.warning(
+                            "WebSocket upstream error: %r",
+                            _get_websocket_error_detail(msg),
+                        )
+                        return ("both", aiohttp.WSCloseCode.INTERNAL_ERROR, b"")
+                    elif msg.type == aiohttp.WSMsgType.CLOSED:
+                        return ("client", aiohttp.WSCloseCode.OK, b"")
 
-                client_task = asyncio.create_task(_forward_client_to_upstream())
-                upstream_task = asyncio.create_task(_forward_upstream_to_client())
+            client_task = asyncio.create_task(_forward_client_to_upstream())
+            upstream_task = asyncio.create_task(_forward_upstream_to_client())
+            try:
                 done, pending = await asyncio.wait(
                     {client_task, upstream_task},
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                close_target, code, message = next(task.result() for task in done)
-
                 for task in pending:
                     task.cancel()
                 for task in pending:
-                    with suppress(asyncio.CancelledError):
+                    with suppress(asyncio.CancelledError, Exception):
                         await task
 
-                if close_target == "upstream":
-                    await ws_response.close(code=code, message=message)
-                    await ws_upstream.close(code=code, message=message)
-                elif close_target == "client":
-                    await ws_upstream.close(code=code, message=message)
-                    await ws_response.close(code=code, message=message)
-                else:
-                    await ws_upstream.close(code=code, message=message)
-                    await ws_response.close(code=code, message=message)
-                return ws_response
+                # A forwarding task may have failed instead of returning a
+                # close target; the WebSocket handshake already completed, so
+                # the failure must be resolved here, not by the outer HTTP
+                # error handlers.
+                result: tuple[str, int, bytes] | None = None
+                for task in done:
+                    exc = task.exception()
+                    if exc is not None:
+                        logger.warning("WebSocket forwarding failed: %r", exc)
+                    elif result is None:
+                        result = task.result()
+                if result is None:
+                    result = ("both", int(aiohttp.WSCloseCode.INTERNAL_ERROR), b"")
+                close_target, code, message = result
+            finally:
+                client_task.cancel()
+                upstream_task.cancel()
+
+            if close_target == "upstream":
+                await ws_response.close(code=code, message=message)
+                await ws_upstream.close(code=code, message=message)
+            else:
+                await ws_upstream.close(code=code, message=message)
+                await ws_response.close(code=code, message=message)
+            return ws_response
     except aiohttp.WSServerHandshakeError as exc:
         logger.debug("WebSocket upstream rejected handshake: %s", exc)
         return web.Response(
