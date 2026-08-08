@@ -63,6 +63,7 @@ def test_bundled_sample_covers_supported_service_and_target_forms() -> None:
     assert services["frontend"].command is None
     assert services["external_socket"].command is None
     assert services["optional_service"].disabled
+    assert not services["on_demand"].auto_start
     assert services["worker"].routes == []
 
     socket_app = services["socket_app"]
@@ -228,6 +229,63 @@ target_port_env = "APP_PORT"
     assert svc.env == {"APP_PORT": "3000"}
     assert len(svc.routes) == 1
     assert svc.routes[0].id == "external"
+
+
+def test_auto_start_defaults_to_true_and_accepts_false(tmp_path: Path) -> None:
+    toml = """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.eager]
+command = ["eager-server"]
+
+[services.manual]
+command = ["manual-server"]
+auto_start = false
+"""
+    path = tmp_path / "services.toml"
+    path.write_text(toml)
+    manifest = load_routes(path)
+
+    assert manifest.services["eager"].auto_start
+    assert not manifest.services["manual"].auto_start
+
+
+def test_auto_start_rejects_non_boolean_and_commandless_services(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "services.toml"
+    path.write_text(
+        """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.app]
+command = ["serve"]
+auto_start = "false"
+"""
+    )
+    with pytest.raises(RouteConfigError, match="services.app.auto_start must be a bool"):
+        load_routes(path)
+
+    path.write_text(
+        """
+http_port = 2800
+bind = ["127.0.0.1"]
+
+[services.external]
+auto_start = false
+
+[[services.external.routes]]
+id = "external"
+hosts = ["external.localhost"]
+target_port = 3000
+"""
+    )
+    with pytest.raises(
+        RouteConfigError, match="services.external.auto_start requires command"
+    ):
+        load_routes(path)
 
 
 def test_command_empty_list_rejected(tmp_path: Path) -> None:

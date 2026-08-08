@@ -1270,6 +1270,8 @@ class ManagerController:
             note = "  (disabled — routes inactive)"
         elif service.command is None:
             note = "  (external — not started here)"
+        elif not service.auto_start:
+            note = "  (manual start — not started with the others)"
         else:
             note = ""
         service_item = _read_only_item(f"{service.name}{note}")
