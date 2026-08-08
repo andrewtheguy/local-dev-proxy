@@ -21,6 +21,8 @@ import logging
 import os
 import sys
 
+from PySide6.QtGui import QGuiApplication
+
 logger = logging.getLogger(__name__)
 
 _POLICY_REGULAR = 0
@@ -36,7 +38,14 @@ def _qt_platform_is_cocoa() -> bool:
     because no event loop ever answers the Dock. Skip the runtime entirely
     unless the platform is cocoa (Qt's macOS default when the variable is
     unset).
+
+    Once a Qt application is running, its loaded plugin is authoritative — it
+    honours ``-platform`` overrides and fallback selection that the raw
+    environment string cannot reflect. Before that (``platformName()`` merely
+    reports the compiled-in default), fall back to parsing the variable.
     """
+    if QGuiApplication.instance() is not None:
+        return QGuiApplication.platformName() == "cocoa"
     platform = os.environ.get("QT_QPA_PLATFORM")
     if not platform:
         return True
