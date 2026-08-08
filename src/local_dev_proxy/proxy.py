@@ -128,6 +128,7 @@ class _HostMatcher:
         self._wildcards: list[tuple[re.Pattern[str], ResolvedRoute]] = []
         for route in routes:
             for pattern in route.host_patterns:
+                pattern = pattern.lower()
                 if any(ch in pattern for ch in "*?["):
                     self._wildcards.append(
                         (re.compile(fnmatch.translate(pattern)), route)
@@ -136,6 +137,7 @@ class _HostMatcher:
                     self._exact.setdefault(pattern, route)
 
     def match(self, host: str) -> ResolvedRoute | None:
+        host = host.lower()
         route = self._exact.get(host)
         if route is not None:
             return route
@@ -287,7 +289,7 @@ class _UpstreamSessions:
             connector = (
                 aiohttp.UnixConnector(path=key)
                 if key is not None
-                else aiohttp.TCPConnector(limit=0)
+                else aiohttp.TCPConnector(limit=512, limit_per_host=256)
             )
             session = aiohttp.ClientSession(
                 connector=connector,
@@ -300,8 +302,9 @@ class _UpstreamSessions:
     async def close(self) -> None:
         sessions = list(self._sessions.values())
         self._sessions.clear()
-        for session in sessions:
-            await session.close()
+        await asyncio.gather(
+            *(session.close() for session in sessions), return_exceptions=True
+        )
 
 
 def make_proxy_app(route_table: RouteTable) -> web.Application:
@@ -377,6 +380,7 @@ async def _proxy_http(
     headers = _filter_headers(request.headers)
     body = request.content if request.can_read_body else None
 
+    resp: web.StreamResponse | None = None
     try:
         async with session.request(
             request.method,
@@ -398,7 +402,15 @@ async def _proxy_http(
             return resp
     except aiohttp.ClientError as exc:
         logger.debug("Upstream error for %s: %s", target_url, exc)
-        return web.Response(status=502, text="Bad Gateway")
+        if resp is None:
+            return web.Response(status=502, text="Bad Gateway")
+        # The response already started streaming; a 502 can no longer be
+        # sent. Drop the connection so the client sees a truncated response
+        # rather than a complete-looking one.
+        resp.force_close()
+        if request.transport is not None:
+            request.transport.close()
+        return resp
 
 
 async def _proxy_websocket(
@@ -471,25 +483,39 @@ async def _proxy_websocket(
 
             client_task = asyncio.create_task(_forward_client_to_upstream())
             upstream_task = asyncio.create_task(_forward_upstream_to_client())
-            done, pending = await asyncio.wait(
-                {client_task, upstream_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            try:
+                done, pending = await asyncio.wait(
+                    {client_task, upstream_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
 
-            close_target, code, message = next(task.result() for task in done)
+                for task in pending:
+                    task.cancel()
+                for task in pending:
+                    with suppress(asyncio.CancelledError, Exception):
+                        await task
 
-            for task in pending:
-                task.cancel()
-            for task in pending:
-                with suppress(asyncio.CancelledError):
-                    await task
+                # A forwarding task may have failed instead of returning a
+                # close target; the WebSocket handshake already completed, so
+                # the failure must be resolved here, not by the outer HTTP
+                # error handlers.
+                result: tuple[str, int, bytes] | None = None
+                for task in done:
+                    exc = task.exception()
+                    if exc is not None:
+                        logger.warning("WebSocket forwarding failed: %r", exc)
+                    elif result is None:
+                        result = task.result()
+                if result is None:
+                    result = ("both", int(aiohttp.WSCloseCode.INTERNAL_ERROR), b"")
+                close_target, code, message = result
+            finally:
+                client_task.cancel()
+                upstream_task.cancel()
 
             if close_target == "upstream":
                 await ws_response.close(code=code, message=message)
                 await ws_upstream.close(code=code, message=message)
-            elif close_target == "client":
-                await ws_upstream.close(code=code, message=message)
-                await ws_response.close(code=code, message=message)
             else:
                 await ws_upstream.close(code=code, message=message)
                 await ws_response.close(code=code, message=message)
