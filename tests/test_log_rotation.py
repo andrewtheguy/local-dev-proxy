@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from conftest import idle_command
 
 from local_dev_proxy.gui import _configure_manager_logging
 from local_dev_proxy.log_rotation import (
@@ -54,18 +55,13 @@ def test_rotating_writer_preserves_newest_bytes_within_cap(tmp_path: Path) -> No
 def test_service_stdout_and_stderr_are_drained_through_rotation(
     tmp_path: Path,
 ) -> None:
-    script = (
-        "import os, time; "
-        "os.write(1, b'OUT-MARKER\\n'); "
-        "os.write(2, b'ERR-MARKER\\n'); "
-        "time.sleep(30)"
+    command = idle_command(
+        "os.write(1, b'OUT-MARKER\\n')\nos.write(2, b'ERR-MARKER\\n')"
     )
     manifest = RoutesManifest(
         http_port=2800,
         bind=("127.0.0.1",),
-        services={
-            "app": ServiceDef(name="app", command=[sys.executable, "-c", script])
-        },
+        services={"app": ServiceDef(name="app", command=command)},
     )
     manager = ServiceManager(
         manifest,
@@ -103,6 +99,9 @@ def test_log_pump_can_be_cancelled_while_pipe_is_idle(tmp_path: Path) -> None:
     thread = threading.Thread(
         target=pump_log_stream,
         args=(source, writer, stop_event),
+        # The assertions below prove the pump stops; daemon only guarantees a
+        # regression here fails the test instead of wedging interpreter exit.
+        daemon=True,
     )
     thread.start()
     try:

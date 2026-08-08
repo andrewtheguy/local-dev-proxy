@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 from local_dev_proxy.process_manager import ServiceManager
 from local_dev_proxy.routes import RoutesManifest, ServiceDef
 
+from conftest import idle_command
 
-IDLE = [sys.executable, "-c", "import time; time.sleep(30)"]
+
+IDLE = idle_command()
 
 
 def _manager(tmp_path: Path, **services: ServiceDef) -> ServiceManager:
