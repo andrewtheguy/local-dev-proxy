@@ -9,42 +9,34 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build:
-    # The app is cross-platform (PySide6 window + system tray), so lint, type-check,
-    # and tests run on all three desktop OSes. The suite includes the
-    # tests/test_gui_e2e.py GUI end-to-end coverage alongside the proxy/config/routes
-    # logic, all of which must pass everywhere.
+    # The binary is cross-platform (process groups on Unix, console process
+    # groups and named pipes on Windows), so lint and tests run on all three
+    # desktop OSes.
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    # Run Qt without a display; the GUI E2E tests grab widgets off-screen.
-    env:
-      QT_QPA_PLATFORM: offscreen
     steps:
       - uses: actions/checkout@v4
 
-      # PySide6 links against system Qt libraries that GitHub's headless Linux
-      # runners don't ship (e.g. libEGL); Windows/macOS wheels are self-contained.
-      - name: Install Qt system libraries (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libgl1 libxkbcommon0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Install dependencies
-        run: uv sync --locked
+      - name: Check formatting
+        run: cargo fmt --check
 
-      - name: Lint with ruff
-        run: uv run ruff check
+      - name: Lint with clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
 
-      - name: Type check with basedpyright
-        run: uv run basedpyright
-
-      - name: Test with pytest
-        run: uv run pytest
+      - name: Test
+        run: cargo test --locked
