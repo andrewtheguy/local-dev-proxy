@@ -4,6 +4,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use local_dev_proxy::config::load_manifest;
+use local_dev_proxy::desktop::Desktop;
 use local_dev_proxy::frontend::{AppEvent, Frontend, Headless};
 use local_dev_proxy::instance::{
     ActivationServer, LockError, acquire_instance_lock, activate_running_instance,
@@ -17,7 +18,7 @@ const ACTIVATION_TIMEOUT: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
-    Run,
+    Run { headless: bool },
     CheckConfig,
     SampleConfig,
     Version,
@@ -27,8 +28,9 @@ enum Command {
 fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Command, String> {
     let args: Vec<OsString> = args.into_iter().collect();
     match args.as_slice() {
-        [] => Ok(Command::Run),
+        [] => Ok(Command::Run { headless: false }),
         [arg] => match arg.to_str() {
+            Some("--headless") => Ok(Command::Run { headless: true }),
             Some("--check-config") => Ok(Command::CheckConfig),
             Some("--sample-config") => Ok(Command::SampleConfig),
             Some("-V" | "--version") => Ok(Command::Version),
@@ -44,9 +46,10 @@ fn usage() -> String {
         "local-dev-proxy {VERSION}\n\
          Local development process manager with a built-in reverse proxy.\n\n\
          Usage: local-dev-proxy [OPTION]\n\n\
-         With no option, starts the proxy and services from the profile's services.toml\n\
-         and runs until interrupted.\n\n\
+         With no option, opens the manager window and starts the proxy and services\n\
+         from the profile's services.toml.\n\n\
          Options:\n  \
+           --headless       Run the proxy and services without a window until interrupted\n  \
            --check-config   Validate the profile's services.toml and exit\n  \
            --sample-config  Print a reference services.toml and exit\n  \
            -V, --version    Print the version and exit\n  \
@@ -58,7 +61,7 @@ fn usage() -> String {
 
 fn main() -> ExitCode {
     match parse_args(std::env::args_os().skip(1)) {
-        Ok(Command::Run) => run(),
+        Ok(Command::Run { headless }) => run(headless),
         Ok(Command::CheckConfig) => check_config(),
         Ok(Command::SampleConfig) => {
             print!("{SAMPLE_CONFIG}");
@@ -114,7 +117,11 @@ fn check_config() -> ExitCode {
     }
 }
 
-fn run() -> ExitCode {
+fn run(headless: bool) -> ExitCode {
+    #[cfg(windows)]
+    if !headless {
+        release_private_console();
+    }
     let paths = match profile() {
         Ok(paths) => paths,
         Err(code) => return code,
@@ -176,11 +183,31 @@ fn run() -> ExitCode {
         let _ = events.send(AppEvent::Shutdown);
     });
 
-    let frontend: Box<dyn Frontend> = Box::new(Headless);
+    let frontend: Box<dyn Frontend> = if headless {
+        Box::new(Headless)
+    } else {
+        Box::new(Desktop)
+    };
     let code = frontend.run(manager, receiver);
     drop(activation);
     drop(lock);
     code
+}
+
+/// A desktop launch from Explorer gives this console binary a console window
+/// of its own; drop it so only the manager window shows. A console shared
+/// with a terminal is kept.
+#[cfg(windows)]
+fn release_private_console() {
+    use windows_sys::Win32::System::Console::{FreeConsole, GetConsoleProcessList};
+
+    let mut processes = [0u32; 2];
+    // SAFETY: the buffer outlives the call and its length is passed with it.
+    let attached = unsafe { GetConsoleProcessList(processes.as_mut_ptr(), 2) };
+    if attached == 1 {
+        // SAFETY: plain API call; nothing holds console handles yet.
+        unsafe { FreeConsole() };
+    }
 }
 
 #[cfg(unix)]
@@ -229,7 +256,8 @@ mod tests {
 
     #[test]
     fn arguments_select_commands() {
-        assert_eq!(parse(&[]), Ok(Command::Run));
+        assert_eq!(parse(&[]), Ok(Command::Run { headless: false }));
+        assert_eq!(parse(&["--headless"]), Ok(Command::Run { headless: true }));
         assert_eq!(parse(&["--check-config"]), Ok(Command::CheckConfig));
         assert_eq!(parse(&["--sample-config"]), Ok(Command::SampleConfig));
         assert_eq!(parse(&["-V"]), Ok(Command::Version));

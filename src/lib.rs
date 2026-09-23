@@ -1,6 +1,7 @@
 //! Local development process orchestration with a built-in reverse proxy.
 
 pub mod config;
+pub mod desktop;
 pub mod frontend;
 pub mod instance;
 pub mod log_rotation;

@@ -2,7 +2,7 @@
 name = "local-dev-proxy"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.92"
 description = "Local development process orchestration with a built-in reverse proxy"
 authors = ["Andrew Chen <hello@andrewtheguy.com>"]
 license = "MIT"
@@ -20,6 +20,7 @@ hyper = { version = "1.11", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1.20", features = ["client-legacy", "http1", "tokio"] }
 interprocess = "2.4"
 sha2 = "0.11"
+slint = { version = "1.18.1", default-features = false, features = ["std", "backend-winit", "renderer-femtovg", "renderer-software", "accessibility", "compat-1-2", "system-tray"] }
 socket2 = "0.6"
 thiserror = "2.0"
 tokio = { version = "1.53", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
@@ -32,12 +33,20 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_System_Console", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSApplication", "NSResponder"] }
 
 [dev-dependencies]
 futures-util = { version = "0.3.34", default-features = false, features = ["sink", "std"] }
+i-slint-backend-testing = "=1.18.1"
 tempfile = "3.27"
 tokio-tungstenite = "0.30"
+
+[build-dependencies]
+slint-build = "1.18.1"
 
 [profile.release]
 lto = true

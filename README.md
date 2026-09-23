@@ -4,9 +4,9 @@ shipped as a single self-contained binary.
 > **No backward compatibility while on `v0.x`.** Any release may make breaking changes to
 > the configuration format or behavior without a deprecation path. Pin to an exact version.
 
-This release is headless: it runs the proxy and the managed services in the foreground
-and is controlled with signals. The desktop manager window and tray icon from the
-earlier Python releases will return in a later version, built on the same core.
+It opens a manager window with a system-tray (menu bar) icon for controlling services,
+editing the configuration, reading logs, and browsing routes. `--headless` runs the same
+proxy and services with no window, controlled with signals.
 
 ## Installation
 
@@ -16,14 +16,23 @@ no runtime to install.
 ### Download a release binary
 
 Download the archive for your platform from the
-[Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases), extract
-`local-dev-proxy` (`local-dev-proxy.exe` on Windows), and put it on your `PATH`.
+[Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
+
+- **macOS:** unzip `Local Dev Proxy.app` into `/Applications`. The command-line binary is
+  `/Applications/Local Dev Proxy.app/Contents/MacOS/local-dev-proxy`.
+- **Windows:** extract `local-dev-proxy.exe`.
+- **Linux:** extract `local-dev-proxy` and put it on your `PATH`. The window needs an X11
+  or Wayland session; the tray icon needs a StatusNotifierItem host (KDE, or GNOME with
+  the AppIndicator extension).
+
 Release builds are unsigned, so macOS Gatekeeper or Windows SmartScreen may ask you to
 approve the first launch.
 
 ### Build from source
 
-Requires a Rust toolchain (1.89 or newer):
+Requires a Rust toolchain (1.92 or newer). On Linux, also install the fontconfig
+development package (`libfontconfig1-dev` on Debian/Ubuntu, `fontconfig-devel` on
+Fedora):
 
 ```shell
 cargo install --locked --git https://github.com/andrewtheguy/local-dev-proxy.git --tag vx.y.z
@@ -70,10 +79,11 @@ directory:
 | Windows | `%APPDATA%\andrewtheguy\local-dev-proxy\` |
 | Linux | `$XDG_CONFIG_HOME/andrewtheguy/local-dev-proxy/` (or `~/.config/...`) |
 
-The application does not create or seed `services.toml`. Without one it exits with an
-error that names the expected path. `local-dev-proxy --sample-config` prints a
-reference configuration; it is never written into the profile and is not intended to
-run unchanged.
+The application does not seed `services.toml`. Without one, the manager window opens in
+the configuration editor; save a configuration there (or run Start All) to create the
+file. `--headless` instead exits with an error that names the expected path.
+`local-dev-proxy --sample-config` prints a reference configuration; it is never written
+into the profile and is not intended to run unchanged.
 
 `services.toml` holds proxy settings (`http_port`, `bind`), service commands,
 environment values, ports, and routes. Route targets can be TCP ports or Unix domain
@@ -93,13 +103,16 @@ the active file (`.log.1` is newest). This bounds each log to about 60 MiB. Rota
 renames completed files rather than truncating a file while it is being written; once
 the retention limit is reached, only the oldest backup is removed.
 
-Edit the file by hand while the application is stopped, check it with
-`local-dev-proxy --check-config`, then start the application again.
+Edit the configuration in the manager window (**View Config → Stop All & Edit Config**,
+then **Validate**, **Save**, or **Start All**), or edit the file by hand while the
+application is stopped, check it with `local-dev-proxy --check-config`, and start the
+application again.
 
 ## Usage
 
 ```sh
-local-dev-proxy                  # run the proxy and services until interrupted
+local-dev-proxy                  # open the manager window and run the proxy and services
+local-dev-proxy --headless       # run the proxy and services without a window until interrupted
 local-dev-proxy --check-config   # validate services.toml (including routes) and exit
 local-dev-proxy --sample-config  # print a reference services.toml
 local-dev-proxy --version
@@ -110,9 +123,20 @@ On start the application loads `services.toml`, launches every managed service w
 proxied requests, and errors are logged to stderr and to `logs/manager.log`; each
 service's combined stdout/stderr goes to `logs/<service>.log`.
 
-Only one instance runs per profile. Launching it again while it is running asks the
-running instance to show itself and exits immediately; with no manager window to show,
-the running instance only logs the request.
+The manager window has three tabs:
+
+- **Services** — each service's status, PID, restart count, and last exit code. Select a
+  row to start, stop, or restart it; double-click a row to open its log. **View Config**
+  shows the running configuration; **Stop All & Edit Config** stops everything and opens
+  the editor, where **Start All** validates, saves, and launches the edited file. If the
+  configuration fails to start, the editor opens with the error.
+- **Logs** — the tail of a service's log, with a line count and **Follow** to keep it
+  updating.
+- **Routes** — every service's hosts and targets. Click a URL to open it in the browser.
+
+Only one instance runs per profile. Launching it again while it is running brings the
+running instance's window to the front and exits immediately (a headless instance only
+logs the request).
 
 Before launching services, the application merges the `PATH` reported by your login
 shell into its own environment, so tools installed in `~/.local/bin`, Homebrew, and
@@ -120,9 +144,14 @@ similar locations resolve even when the binary is started outside a terminal.
 
 ### Lifecycle
 
+- **Closing the manager window** → hides it; the proxy and services keep running. Reopen
+  it from the tray icon's **Open Manager** (or by launching the application again). On
+  macOS the Dock icon is shown only while the window is open. Without a tray icon,
+  closing the window quits.
+- **Quit** (the window's button, the tray menu, or Ctrl/Cmd-Q) → stops the proxy, stops
+  every managed service together with its child processes, and exits.
 - **SIGTERM, SIGINT (Ctrl-C), or SIGHUP** (Ctrl-C, Ctrl-Break, or closing the console
-  window on Windows) → stops the proxy, stops every managed service together with its
-  child processes, and exits.
+  window on Windows) → the same as Quit.
 - **A managed service exits on its own** → it is reported as `crashed` with its exit
   code. It is not restarted automatically.
 - **Services are stopped** with SIGTERM to their process group (a console Ctrl-Break
@@ -198,8 +227,8 @@ excluded from the proxy and the portal — it is still listed, with a
 
 To keep a service managed but not launch it with the others, add `auto_start = false`
 to its `[services.x]` table. It is skipped on startup, and its
-routes stay registered with the proxy. Starting it on demand is part of the manager
-API for the upcoming desktop UI; until then it shows a `stopped` status.
+routes stay registered with the proxy. It shows a `stopped` status until you start it
+from the Services tab.
 `auto_start` defaults to `true` and requires `command`, since a service without one is
 not started by the manager at all.
 
@@ -211,13 +240,14 @@ sections.
 
 ## Troubleshooting
 
-- **Service URL not proxying:** check `logs/manager.log` for the service's state, and
-  confirm the port or Unix socket path is set in `services.toml`.
+- **Service URL not proxying:** check the service's state on the Services tab (or in
+  `logs/manager.log`), and confirm the port or Unix socket path is set in `services.toml`.
 - **Proxy not responding:** check `logs/manager.log` inside the platform configuration
   directory for startup errors, run `local-dev-proxy --check-config`, then start the
   application again.
-- **View service logs:** read `logs/<service>.log` (for a live view,
+- **View service logs:** use the Logs tab, or read `logs/<service>.log` (for a live view,
   `tail -f logs/<service>.log`).
+- **No window on a server or over SSH:** run with `--headless`.
 - **Unix socket routes on Windows:** not supported; such routes answer `502`.
 
 ## Development
@@ -228,8 +258,9 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-The crate is split so that a desktop frontend can be added without touching the
-backend: `manager::Manager` owns the proxy and services and exposes every operation a UI
-needs (per-service start/stop/restart, status, log tails, route listing, config
-read/validate/save), and `frontend::Frontend` is the trait a UI implements.
-`frontend::Headless` is the only implementation today.
+`manager::Manager` owns the proxy and services and exposes every operation a UI needs
+(per-service start/stop/restart, status, log tails, route listing, config
+read/validate/save). `frontend::Frontend` is the trait a UI implements:
+`desktop::Desktop` is the Slint manager window and tray (`ui/app.slint`), and
+`frontend::Headless` runs without a UI. The desktop tests drive the real window on
+Slint's headless testing backend, so they need no display.

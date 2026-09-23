@@ -3,7 +3,7 @@
 //! [`Manager`] owns the proxy and the managed service processes for one
 //! profile and exposes every operation a frontend needs: lifecycle, per-service
 //! control, status, logs, routes, and configuration editing. Frontends (the
-//! headless runner today, a desktop UI later) only call into this type.
+//! headless runner and the desktop UI) only call into this type.
 
 use std::path::Path;
 
@@ -181,9 +181,12 @@ impl Manager {
         }
     }
 
-    /// Validate configuration text without touching the filesystem.
-    pub fn validate_config(text: &str) -> Result<Manifest, ConfigError> {
-        parse_manifest(text)
+    /// Check configuration text, including that every route resolves,
+    /// without touching the filesystem.
+    pub fn validate_config(&self, text: &str) -> Result<Manifest, ConfigError> {
+        let manifest = parse_manifest(text)?;
+        RouteTable::from_manifest(&manifest, &|key| std::env::var(key).ok(), self.paths.root())?;
+        Ok(manifest)
     }
 
     /// Validate and atomically replace the configuration. Only allowed while
@@ -192,7 +195,7 @@ impl Manager {
         if self.is_running() {
             return Err(ManagerError::StillRunning);
         }
-        parse_manifest(text)?;
+        self.validate_config(text)?;
         write_atomically(&self.paths.services_file(), text)
     }
 }
@@ -326,7 +329,12 @@ mod tests {
         let (_dir, mut manager) = manager();
         let text =
             config(free_port()).replace("target_port = 1", "target_port_env = \"LDP_UNSET_PORT\"");
-        manager.save_config(&text).unwrap();
+        assert!(matches!(
+            manager.save_config(&text),
+            Err(ManagerError::Config(_))
+        ));
+        // A hand-edited file with the same problem fails before any launch.
+        std::fs::write(manager.paths().services_file(), &text).unwrap();
         assert!(matches!(manager.start(), Err(ManagerError::Config(_))));
         assert!(manager.services().is_empty());
     }

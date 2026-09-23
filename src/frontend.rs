@@ -1,10 +1,7 @@
 //! Frontends drive a [`Manager`] and react to application events.
 //!
-//! v1 ships only [`Headless`]. Behaviour that needs a desktop UI — the
-//! manager window (service list, config editor, log viewer, routes view),
-//! the system-tray icon, macOS Dock-icon visibility, and opening route URLs
-//! in a browser — belongs to a future [`Frontend`] implementation built on
-//! the same [`Manager`] API.
+//! [`crate::desktop::Desktop`] is the default: a manager window plus a
+//! system-tray icon. [`Headless`] runs the same backend with no UI.
 
 use std::process::ExitCode;
 use std::sync::mpsc::Receiver;

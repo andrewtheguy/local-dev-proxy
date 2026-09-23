@@ -32,6 +32,11 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # Slint's text stack links fontconfig on Linux.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
       - name: Check formatting
         run: cargo fmt --check
 

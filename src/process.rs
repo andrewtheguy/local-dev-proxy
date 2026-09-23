@@ -587,11 +587,18 @@ mod platform {
     use std::os::windows::process::{CommandExt, ExitStatusExt};
     use std::process::{Child, Command, ExitStatus, Stdio};
 
-    use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
-    use windows_sys::Win32::System::Threading::CREATE_NEW_PROCESS_GROUP;
+    use windows_sys::Win32::System::Console::{
+        CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent, GetConsoleWindow,
+    };
+    use windows_sys::Win32::System::Threading::{CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW};
 
     pub fn isolate_process_group(command: &mut Command) {
-        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+        // SAFETY: plain query of this process's console.
+        let has_console = !unsafe { GetConsoleWindow() }.is_null();
+        // Without a console of our own (a desktop launch), every console
+        // child would otherwise open a window of its own.
+        let hide_console = if has_console { 0 } else { CREATE_NO_WINDOW };
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP | hide_console);
     }
 
     pub fn request_tree_stop(child: &Child) {
