@@ -17,20 +17,26 @@ on a minimal system install `libfontconfig1` (Debian/Ubuntu) or `fontconfig` (Fe
 
 ### Download a release binary
 
-Download the archive for your platform from the
+Download the file for your platform from the
 [Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
 
-- **macOS:** download `local-dev-proxy-macos-arm64.zip` (Apple silicon) or
-  `local-dev-proxy-macos-x86_64.zip` (Intel) and unzip `Local Dev Proxy.app` into
+- **macOS:** open `local-dev-proxy-macos-arm64.dmg` (Apple silicon) or
+  `local-dev-proxy-macos-amd64.dmg` (Intel) and drag `Local Dev Proxy.app` into
   `/Applications`. The command-line binary is
   `/Applications/Local Dev Proxy.app/Contents/MacOS/local-dev-proxy`.
-- **Windows:** extract `local-dev-proxy.exe`.
-- **Linux:** extract `local-dev-proxy` and put it on your `PATH`. The window needs an X11
-  or Wayland session; the tray icon needs a StatusNotifierItem host (KDE, or GNOME with
-  the AppIndicator extension).
+- **Windows:** download `local-dev-proxy-windows-amd64.exe` (stable releases only;
+  prereleases have no Windows build).
+- **Linux:** download `local-dev-proxy-linux-amd64` or `local-dev-proxy-linux-arm64`,
+  `chmod +x` it, and put it on your `PATH`. The window needs an X11 or Wayland session;
+  the tray icon needs a StatusNotifierItem host (KDE, or GNOME with the AppIndicator
+  extension).
 
 Release builds are unsigned, so macOS Gatekeeper or Windows SmartScreen may ask you to
-approve the first launch.
+approve the first launch. If macOS says the app is damaged, clear the download quarantine:
+
+```shell
+xattr -dr com.apple.quarantine "/Applications/Local Dev Proxy.app"
+```
 
 ### Build from source
 

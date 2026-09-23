@@ -1,0 +1,41 @@
+name: Test (Manual)
+
+# Runs the test suite on every release target without cutting a release,
+# including Linux arm64, which CI does not cover. Tests use the debug profile:
+# the UI test queries Slint element debug info that release builds leave out,
+# so this cannot share the release jobs' caches.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-${{ matrix.target }}
+
+      # Slint's text stack links fontconfig on Linux.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
+
+      - name: Test
+        run: cargo test --locked --target ${{ matrix.target }}

@@ -1,4 +1,4 @@
-name: Release
+name: Release (Manual)
 
 on:
   workflow_dispatch:
@@ -10,137 +10,210 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  prepare:
+  setup:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.version.outputs.tag }}
+      release_tag: ${{ steps.tag.outputs.release_tag }}
+      is_prerelease: ${{ steps.tag.outputs.is_prerelease }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Determine and validate version
+      - name: Extract version from Cargo.toml
         id: version
-        shell: bash
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="local-dev-proxy") | .version')
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            echo "::error::Could not parse version from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Generate tag
+        id: tag
         env:
-          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Tag and title always come from the Cargo.toml version; whether it is a
+          # prerelease depends only on the branch (anything other than main).
+          echo "release_tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            echo "release_title=Prerelease v$VERSION" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_title=Release v$VERSION" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Abort if tag already exists
+        run: |
+          if git ls-remote --tags origin "refs/tags/${{ steps.tag.outputs.release_tag }}" | grep -q .; then
+            echo "::error::Tag ${{ steps.tag.outputs.release_tag }} already exists on remote. Bump the version before releasing."
+            exit 1
+          fi
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
-          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
-          if [ -z "$version" ]; then
-            echo "Could not determine version from Cargo.toml" >&2
-            exit 1
+          # A draft does not create the git tag, so a stale draft from a failed run
+          # is the only thing that can collide here.
+          if gh release view "${{ steps.tag.outputs.release_tag }}" --json isDraft --jq '.isDraft' 2>/dev/null | grep -qx true; then
+            echo "Deleting stale draft release ${{ steps.tag.outputs.release_tag }}"
+            gh release delete "${{ steps.tag.outputs.release_tag }}" --yes
           fi
-          tag="v${version}"
-          if gh api "repos/${GH_REPO}/git/ref/tags/${tag}" > /dev/null 2>&1; then
-            echo "Tag ${tag} already exists. Bump the version before releasing." >&2
-            exit 1
+          args=()
+          if [ "${{ steps.tag.outputs.is_prerelease }}" = "true" ]; then
+            args+=(--prerelease)
+          else
+            # Generate notes against the previous stable release, not the latest prerelease.
+            prev_stable=$(gh release list --exclude-pre-releases --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')
+            if [ -n "$prev_stable" ]; then
+              args+=(--notes-start-tag "$prev_stable")
+            fi
           fi
-          echo "Release tag: ${tag}"
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          gh release create "${{ steps.tag.outputs.release_tag }}" \
+            --draft \
+            --target "${{ github.sha }}" \
+            --title "${{ steps.tag.outputs.release_title }}" \
+            --generate-notes \
+            "${args[@]}"
 
-  build:
-    needs: prepare
+  build-linux:
+    needs: setup
     strategy:
-      fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            asset: local-dev-proxy-macos-arm64.zip
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            asset: local-dev-proxy-macos-x86_64.zip
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            asset: local-dev-proxy-linux-x86_64.tar.gz
+            suffix: linux-amd64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-            asset: local-dev-proxy-linux-arm64.tar.gz
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            asset: local-dev-proxy-windows-x86_64.zip
+            suffix: linux-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
 
       # Slint's text stack links fontconfig on Linux.
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
+      - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev
 
-      - name: Build release binary
+      - name: Build release
         run: cargo build --locked --release --target ${{ matrix.target }}
 
-      - name: Package app bundle (macOS)
-        if: runner.os == 'macOS'
-        shell: bash
+      - name: Rename binary
         run: |
-          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
-          app="dist/Local Dev Proxy.app"
+          mkdir -p dist
+          mv target/${{ matrix.target }}/release/local-dev-proxy dist/local-dev-proxy-${{ matrix.suffix }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.suffix }}
+          path: dist/local-dev-proxy-${{ matrix.suffix }}
+          if-no-files-found: error
+
+  build-macos:
+    needs: setup
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            suffix: macos-arm64
+          # Cross-compiled for Intel Macs on the Apple silicon runner.
+          - target: x86_64-apple-darwin
+            suffix: macos-amd64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Package app (.dmg, unsigned)
+        # Unsigned: browser downloads get the quarantine attribute; the README
+        # documents the xattr workaround. The disk image holds the .app next to
+        # an Applications link for drag-to-install.
+        env:
+          VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          staging="dist/dmg"
+          app="$staging/Local Dev Proxy.app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp "target/${{ matrix.target }}/release/local-dev-proxy" "$app/Contents/MacOS/"
           cp assets/dock-icon.icns "$app/Contents/Resources/"
-          sed "s/@VERSION@/${version}/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
-          ditto -c -k --keepParent "$app" "dist/${{ matrix.asset }}"
+          sed "s/@VERSION@/${VERSION}/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname "Local Dev Proxy" -srcfolder "$staging" -ov -format UDZO \
+            "dist/local-dev-proxy-${{ matrix.suffix }}.dmg"
 
-      - name: Package binary (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          mkdir -p dist
-          tar -C "target/${{ matrix.target }}/release" -czf "dist/${{ matrix.asset }}" local-dev-proxy
-
-      - name: Package binary (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Compress-Archive -Path "target/${{ matrix.target }}/release/local-dev-proxy.exe" -DestinationPath "dist/${{ matrix.asset }}"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.target }}
-          path: dist/${{ matrix.asset }}
+          name: release-${{ matrix.suffix }}
+          path: dist/local-dev-proxy-${{ matrix.suffix }}.dmg
           if-no-files-found: error
 
-  create-release:
-    needs: [prepare, build]
+  build-windows:
+    needs: setup
+    # Windows ships with stable releases only.
+    if: needs.setup.outputs.is_prerelease == 'false'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-x86_64-pc-windows-msvc
+
+      - name: Build release
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc
+
+      - name: Rename binary
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Move-Item target\x86_64-pc-windows-msvc\release\local-dev-proxy.exe dist\local-dev-proxy-windows-amd64.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-amd64
+          path: dist/local-dev-proxy-windows-amd64.exe
+          if-no-files-found: error
+
+  publish-release:
+    needs: [setup, build-linux, build-macos, build-windows]
+    # Runs when build-windows is skipped for a prerelease, but never after a failure.
+    if: always() && needs.setup.result == 'success' && needs.build-linux.result == 'success' && needs.build-macos.result == 'success' && (needs.build-windows.result == 'success' || needs.build-windows.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           pattern: release-*
-          path: release-assets
+          path: artifacts
           merge-multiple: true
 
-      - name: Create GitHub release
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Upload artifacts to draft release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          mapfile -d '' assets < <(find release-assets -type f -print0 | sort -z)
-          if [ "${#assets[@]}" -ne 5 ]; then
-            echo "Expected 5 release assets, found ${#assets[@]}" >&2
-            exit 1
-          fi
+        run: gh release upload "${{ needs.setup.outputs.release_tag }}" artifacts/* --clobber
 
-          prerelease_flag=""
-          if [ "$GITHUB_REF_NAME" != "main" ]; then
-            prerelease_flag="--prerelease"
-          fi
-
-          gh release create "$RELEASE_TAG" \
-            --title "$RELEASE_TAG" \
-            --generate-notes \
-            --target "${GITHUB_SHA}" \
-            $prerelease_flag \
-            "${assets[@]}"
+      - name: Publish release (remove draft, creates the tag)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "${{ needs.setup.outputs.release_tag }}" --draft=false
