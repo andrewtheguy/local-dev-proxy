@@ -74,6 +74,8 @@ pub enum ServiceError {
     Unknown(String),
     #[error("Service '{0}' is unmanaged")]
     Unmanaged(String),
+    #[error("Failed to start {name}: {message}")]
+    Launch { name: String, message: String },
 }
 
 #[derive(Debug)]
@@ -187,33 +189,33 @@ impl Shared {
         }
     }
 
-    fn start_locked(&self, info: &mut ServiceInfo) {
+    fn start_locked(&self, info: &mut ServiceInfo) -> Result<(), ServiceError> {
         if info.launch.is_none() {
-            return;
+            return Ok(());
         }
         if let Some(child) = &mut info.child {
             match child.try_wait() {
-                Ok(None) => return,
+                Ok(None) => return Ok(()),
                 Ok(Some(status)) => info.mark_exited(status),
                 Err(_) => {}
             }
         }
         info.finish_capture();
         let Some(launch) = &info.launch else {
-            return;
+            return Ok(());
         };
 
         let log_path = self.log_path(&info.name);
         let mut log = match RotatingLogWriter::open(&log_path, self.limits) {
             Ok(log) => log,
             Err(err) => {
-                tracing::error!(
-                    "Failed to start {}: cannot open {}: {err}",
-                    info.name,
-                    log_path.display()
-                );
+                let message = format!("cannot open {}: {err}", log_path.display());
+                tracing::error!("Failed to start {}: {message}", info.name);
                 info.status = ServiceStatus::Crashed;
-                return;
+                return Err(ServiceError::Launch {
+                    name: info.name.clone(),
+                    message,
+                });
             }
         };
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
@@ -246,6 +248,7 @@ impl Shared {
                 info.child = Some(child);
                 info.status = ServiceStatus::Running;
                 info.exit_code = None;
+                Ok(())
             }
             Err(err) => {
                 let program = &launch.command[0];
@@ -257,6 +260,10 @@ impl Shared {
                 let _ = writeln!(log, "ERROR: {message}");
                 tracing::error!("Failed to start {}: {message}", info.name);
                 info.status = ServiceStatus::Crashed;
+                Err(ServiceError::Launch {
+                    name: info.name.clone(),
+                    message,
+                })
             }
         }
     }
@@ -268,7 +275,10 @@ impl Shared {
             return;
         };
         let status = match child.try_wait() {
-            Ok(Some(status)) => status,
+            Ok(Some(status)) => {
+                platform::stop_orphaned_group(child.id());
+                status
+            }
             _ => terminate_tree(&mut child, &info.name),
         };
         info.finish_capture();
@@ -297,9 +307,9 @@ pub struct ServiceManager {
 
 impl ServiceManager {
     /// Prepare services from `manifest`. Command placeholders are resolved
-    /// here, with the process environment taking precedence over each
-    /// service's `env` table; the child environment is the process
-    /// environment overlaid with the service's `env`.
+    /// here and the child environment is built with the same precedence as
+    /// route resolution: the process environment overrides each service's
+    /// `env` table.
     pub fn new(
         manifest: &Manifest,
         log_dir: impl Into<PathBuf>,
@@ -321,13 +331,12 @@ impl ServiceManager {
                             .ok()
                             .or_else(|| service.env.get(key).cloned())
                     })?;
-                    let mut env: HashMap<OsString, OsString> = std::env::vars_os().collect();
-                    env.extend(
-                        service
-                            .env
-                            .iter()
-                            .map(|(key, value)| (key.into(), value.into())),
-                    );
+                    let mut env: HashMap<OsString, OsString> = service
+                        .env
+                        .iter()
+                        .map(|(key, value)| (key.into(), value.into()))
+                        .collect();
+                    env.extend(std::env::vars_os());
                     let launch = Launch {
                         command,
                         env,
@@ -364,7 +373,9 @@ impl ServiceManager {
             let mut services = self.shared.lock();
             for info in services.iter_mut() {
                 if info.launch.as_ref().is_some_and(|launch| launch.auto_start) {
-                    self.shared.start_locked(info);
+                    // A failed launch is logged and shown as `crashed`; the
+                    // remaining services still start.
+                    let _ = self.shared.start_locked(info);
                 }
             }
         }
@@ -386,14 +397,17 @@ impl ServiceManager {
     }
 
     pub fn stop_service(&self, name: &str) -> Result<(), ServiceError> {
-        self.with_managed(name, |_, info| Shared::stop_locked(info))
+        self.with_managed(name, |_, info| {
+            Shared::stop_locked(info);
+            Ok(())
+        })
     }
 
     pub fn restart_service(&self, name: &str) -> Result<(), ServiceError> {
         self.with_managed(name, |shared, info| {
             Shared::stop_locked(info);
-            shared.start_locked(info);
             info.restart_count += 1;
+            shared.start_locked(info)
         })
     }
 
@@ -429,7 +443,7 @@ impl ServiceManager {
     fn with_managed(
         &self,
         name: &str,
-        action: impl FnOnce(&Shared, &mut ServiceInfo),
+        action: impl FnOnce(&Shared, &mut ServiceInfo) -> Result<(), ServiceError>,
     ) -> Result<(), ServiceError> {
         let mut services = self.shared.lock();
         let info = services
@@ -439,8 +453,7 @@ impl ServiceManager {
         if info.launch.is_none() {
             return Err(ServiceError::Unmanaged(name.to_owned()));
         }
-        action(&self.shared, info);
-        Ok(())
+        action(&self.shared, info)
     }
 
     fn monitor_slot(&self) -> MutexGuard<'_, Option<Monitor>> {
@@ -509,8 +522,17 @@ fn spawn_with_output(
 
 /// Ask the child's whole process tree to exit, escalating to a forced kill.
 fn terminate_tree(child: &mut Child, name: &str) -> ExitStatus {
+    let deadline = Instant::now() + GRACEFUL_STOP_TIMEOUT;
     platform::request_tree_stop(child);
     if let Some(status) = wait_timeout(child, GRACEFUL_STOP_TIMEOUT) {
+        // The leader exiting does not mean its descendants honoured the
+        // request; give them the rest of the grace period, then kill them.
+        if !platform::wait_group_drained(child.id(), deadline) {
+            tracing::warn!(
+                "Processes of service {name} did not stop within {GRACEFUL_STOP_TIMEOUT:?}; killing them"
+            );
+            platform::stop_orphaned_group(child.id());
+        }
         return status;
     }
     tracing::warn!("Service {name} did not stop within {GRACEFUL_STOP_TIMEOUT:?}; killing it");
@@ -559,6 +581,9 @@ fn display_code(code: Option<i32>) -> String {
 mod platform {
     use std::os::unix::process::{CommandExt, ExitStatusExt};
     use std::process::{Child, Command, ExitStatus};
+    use std::time::Instant;
+
+    use super::WAIT_POLL;
 
     pub fn isolate_process_group(command: &mut Command) {
         command.process_group(0);
@@ -589,6 +614,26 @@ mod platform {
         // SAFETY: plain syscall. The group outlives its reaped leader while
         // any member remains, so its id cannot have been reused yet.
         unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    }
+
+    /// Wait until no process remains in the reaped leader's group, or until
+    /// `deadline`. Returns whether the group is gone.
+    pub fn wait_group_drained(pid: u32, deadline: Instant) -> bool {
+        let Ok(pgid) = libc::pid_t::try_from(pid) else {
+            return true;
+        };
+        loop {
+            // SAFETY: signal 0 only probes for the group's existence.
+            if unsafe { libc::killpg(pgid, 0) } != 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(WAIT_POLL);
+        }
     }
 
     pub fn unknown_exit() -> ExitStatus {
@@ -638,6 +683,11 @@ mod platform {
     /// by a dead (possibly reused) PID could hit an unrelated tree, so
     /// leftovers of a crashed service are not tracked.
     pub fn stop_orphaned_group(_pid: u32) {}
+
+    /// See `stop_orphaned_group`: the tree is not tracked past its root.
+    pub fn wait_group_drained(_pid: u32, _deadline: std::time::Instant) -> bool {
+        true
+    }
 
     pub fn unknown_exit() -> ExitStatus {
         ExitStatus::from_raw(1)
@@ -822,14 +872,20 @@ mod tests {
     }
 
     #[test]
-    fn missing_command_is_logged_and_marked_crashed() {
+    fn missing_command_is_reported_logged_and_marked_crashed() {
         let dir = tempfile::tempdir().unwrap();
         let manager = manager(
             dir.path(),
             "[services.app]\ncommand = [\"definitely-not-a-real-command-xyz\"]\n",
             LogLimits::default(),
         );
-        manager.start_service("app").unwrap();
+        assert_eq!(
+            manager.start_service("app"),
+            Err(ServiceError::Launch {
+                name: "app".into(),
+                message: "Command not found: definitely-not-a-real-command-xyz".into(),
+            })
+        );
         assert_eq!(status_of(&manager, "app"), ServiceStatus::Crashed);
         let log = std::fs::read_to_string(manager.log_path("app").unwrap()).unwrap();
         assert!(log.contains("ERROR: Command not found: definitely-not-a-real-command-xyz"));
@@ -859,6 +915,54 @@ mod tests {
         manager.stop_service("app").unwrap();
         // SAFETY: signal 0 only probes for existence.
         assert!(wait_until(|| unsafe { libc::kill(grandchild, 0) } != 0));
+    }
+
+    #[test]
+    fn stop_kills_descendants_that_ignore_sigterm() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("grandchild.pid");
+        let manager = manager(
+            dir.path(),
+            &format!(
+                "[services.app]\ncommand = [\"sh\", \"-c\", \"(trap '' TERM; exec sleep 60) & echo $! > {}; exec sleep 60\"]\n",
+                pid_file.display()
+            ),
+            LogLimits::default(),
+        );
+        manager.start_service("app").unwrap();
+        assert!(wait_until(
+            || std::fs::read_to_string(&pid_file).is_ok_and(|s| s.ends_with('\n'))
+        ));
+        let grandchild: libc::pid_t = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        manager.stop_service("app").unwrap();
+        // SAFETY: signal 0 only probes for existence.
+        assert!(wait_until(|| unsafe { libc::kill(grandchild, 0) } != 0));
+    }
+
+    #[test]
+    fn process_environment_overrides_service_env_in_child() {
+        let Some(home) = std::env::var_os("HOME") else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.txt");
+        let manager = manager(
+            dir.path(),
+            &format!(
+                "[services.app]\ncommand = [\"sh\", \"-c\", \"printf %s \\\"$HOME\\\" > {}\"]\n\
+                 env = {{HOME = \"from-service\"}}\n",
+                out.display()
+            ),
+            LogLimits::default(),
+        );
+        manager.start_service("app").unwrap();
+        assert!(wait_until(
+            || std::fs::read(&out).is_ok_and(|s| s == home.as_encoded_bytes())
+        ));
     }
 
     #[test]

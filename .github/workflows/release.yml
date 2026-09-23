@@ -34,13 +34,23 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          # Tag and title always come from the Cargo.toml version; whether it is a
-          # prerelease depends only on the branch (anything other than main).
+          # Tag and title always come from the Cargo.toml version. Releases from
+          # main are stable; any other branch is a prerelease and must carry a
+          # SemVer prerelease suffix (e.g. 0.0.15-rc.1), so it never takes the tag
+          # of a later stable release and the binary reports itself as a prerelease.
           echo "release_tag=v$VERSION" >> "$GITHUB_OUTPUT"
           if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+            if [[ "$VERSION" != *-* ]]; then
+              echo "::error::Prerelease from ${{ github.ref_name }} needs a prerelease version (e.g. $VERSION-rc.1); Cargo.toml has $VERSION."
+              exit 1
+            fi
             echo "release_title=Prerelease v$VERSION" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
           else
+            if [[ "$VERSION" == *-* ]]; then
+              echo "::error::Stable release from main needs a stable version; Cargo.toml has $VERSION."
+              exit 1
+            fi
             echo "release_title=Release v$VERSION" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
@@ -154,7 +164,8 @@ jobs:
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp "target/${{ matrix.target }}/release/local-dev-proxy" "$app/Contents/MacOS/"
           cp assets/dock-icon.icns "$app/Contents/Resources/"
-          sed "s/@VERSION@/${VERSION}/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
+          # Bundle versions are numeric only, so drop any prerelease suffix.
+          sed "s/@VERSION@/${VERSION%%-*}/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
           ln -s /Applications "$staging/Applications"
           hdiutil create -volname "Local Dev Proxy" -srcfolder "$staging" -ov -format UDZO \
             "dist/local-dev-proxy-${{ matrix.suffix }}.dmg"

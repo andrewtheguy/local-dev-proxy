@@ -59,24 +59,10 @@ cargo run --release
 
 ## What you get
 
-| URL | Service |
-|-----|---------|
-| `http://s3browser.localhost:2800` | s3browser UI |
-| `http://minios3.localhost:2800` | MinIO S3 API |
-| `http://minioconsole.localhost:2800` | MinIO Console |
-| `http://vite.localhost:2800` | Vite dev server (unmanaged) |
-| `http://localhost:2800` | Portal (links to all services) |
-
-## Prerequisites
-
-- `uv`
-- `minio`
-- `s3browser` 0.1.9:
-
-  ```shell
-  uv tool install \
-    https://github.com/andrewtheguy/s3browser/releases/download/v0.1.9/s3browser-0.1.9-py3-none-any.whl
-  ```
+Nothing is configured on first launch (see [Configuration](#configuration)). Once a
+configuration is saved, each route is served at `http://<host>:<http_port>` for the
+hosts it lists, and `http://localhost:<http_port>` shows a portal linking to every
+route. Managed services' commands must be on your `PATH`.
 
 ## Configuration
 
