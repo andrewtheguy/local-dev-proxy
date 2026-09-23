@@ -40,7 +40,7 @@ xattr -dr com.apple.quarantine "/Applications/Local Dev Proxy.app"
 
 ### Build from source
 
-Requires a Rust toolchain (1.92 or newer). On Linux, also install the fontconfig
+Requires a Rust toolchain. On Linux, also install the fontconfig
 development package (`libfontconfig1-dev` on Debian/Ubuntu, `fontconfig-devel` on
 Fedora):
 

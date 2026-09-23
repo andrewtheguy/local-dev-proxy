@@ -2,7 +2,6 @@
 name = "local-dev-proxy"
 version = "0.0.14"
 edition = "2024"
-rust-version = "1.92"
 description = "Local development process orchestration with a built-in reverse proxy"
 authors = ["Andrew Chen <hello@andrewtheguy.com>"]
 license = "MIT"
