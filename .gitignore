@@ -1,13 +1,5 @@
+/target/
 data/
 logs/
-.venv/
-__pycache__/
-.pytest_cache/
-*.pyc
-.claude/settings.local.json
 tmp/
-build/
-dist/
-*.egg-info/
-# dmgbuild config written to CWD by `cxfreeze bdist_dmg`
-/settings.py
+.claude/settings.local.json
