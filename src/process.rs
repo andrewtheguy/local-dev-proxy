@@ -137,7 +137,11 @@ impl ServiceInfo {
 
     /// Record that the child exited without being asked to.
     fn mark_exited(&mut self, status: ExitStatus) {
-        self.child = None;
+        if let Some(child) = self.child.take() {
+            // Background processes the child left behind would otherwise keep
+            // running and hold the log pipe open.
+            platform::stop_orphaned_group(child.id());
+        }
         self.finish_capture();
         self.exit_code = exit_code(status);
         self.status = ServiceStatus::Crashed;
@@ -577,6 +581,16 @@ mod platform {
         signal_group(child, libc::SIGKILL);
     }
 
+    /// Kill what remains of an exited child's process group.
+    pub fn stop_orphaned_group(pid: u32) {
+        let Ok(pgid) = libc::pid_t::try_from(pid) else {
+            return;
+        };
+        // SAFETY: plain syscall. The group outlives its reaped leader while
+        // any member remains, so its id cannot have been reused yet.
+        unsafe { libc::killpg(pgid, libc::SIGKILL) };
+    }
+
     pub fn unknown_exit() -> ExitStatus {
         ExitStatus::from_raw(libc::SIGKILL)
     }
@@ -619,6 +633,11 @@ mod platform {
             .stderr(Stdio::null())
             .status();
     }
+
+    /// Windows keeps no process group once its root exits, and `taskkill /T`
+    /// by a dead (possibly reused) PID could hit an unrelated tree, so
+    /// leftovers of a crashed service are not tracked.
+    pub fn stop_orphaned_group(_pid: u32) {}
 
     pub fn unknown_exit() -> ExitStatus {
         ExitStatus::from_raw(1)
@@ -774,6 +793,32 @@ mod tests {
             status_of(&manager, "app") == ServiceStatus::Crashed
         }));
         assert_eq!(manager.status()[0].exit_code, Some(3));
+    }
+
+    #[test]
+    fn crash_kills_processes_the_child_left_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("grandchild.pid");
+        let manager = manager(
+            dir.path(),
+            &format!(
+                "[services.app]\ncommand = [\"sh\", \"-c\", \"sleep 60 & echo $! > {}; exit 3\"]\n",
+                pid_file.display()
+            ),
+            LogLimits::default(),
+        );
+        manager.start_service("app").unwrap();
+        assert!(wait_until(|| {
+            manager.poll_exits();
+            status_of(&manager, "app") == ServiceStatus::Crashed
+        }));
+        let grandchild: libc::pid_t = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // SAFETY: signal 0 only probes for existence.
+        assert!(wait_until(|| unsafe { libc::kill(grandchild, 0) } != 0));
     }
 
     #[test]

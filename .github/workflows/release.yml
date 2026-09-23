@@ -47,6 +47,9 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             asset: local-dev-proxy-macos-arm64.zip
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: local-dev-proxy-macos-x86_64.zip
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             asset: local-dev-proxy-linux-x86_64.tar.gz
@@ -125,8 +128,8 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           mapfile -d '' assets < <(find release-assets -type f -print0 | sort -z)
-          if [ "${#assets[@]}" -ne 4 ]; then
-            echo "Expected 4 release assets, found ${#assets[@]}" >&2
+          if [ "${#assets[@]}" -ne 5 ]; then
+            echo "Expected 5 release assets, found ${#assets[@]}" >&2
             exit 1
           fi
 

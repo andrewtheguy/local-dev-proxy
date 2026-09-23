@@ -35,10 +35,12 @@ pub fn query_login_shell_path() -> Option<String> {
         .ok()?;
 
     let mut stdout = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    // Detached on timeout: a process the rc files started may hold the pipe.
+    std::thread::spawn(move || {
         let mut output = Vec::new();
         let _ = stdout.read_to_end(&mut output);
-        output
+        let _ = sender.send(output);
     });
 
     let deadline = Instant::now() + SHELL_TIMEOUT;
@@ -54,7 +56,12 @@ pub fn query_login_shell_path() -> Option<String> {
             }
         }
     }
-    let output = String::from_utf8_lossy(&reader.join().ok()?).into_owned();
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let Ok(output) = receiver.recv_timeout(remaining) else {
+        tracing::warn!("Timed out reading the login PATH from {shell:?}");
+        return None;
+    };
+    let output = String::from_utf8_lossy(&output).into_owned();
     extract_marked_path(&output)
 }
 

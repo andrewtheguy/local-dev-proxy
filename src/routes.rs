@@ -111,6 +111,11 @@ fn resolve_socket_path(raw: &str, base: Option<&Path>) -> PathBuf {
     }
 }
 
+/// Whether a route host is a glob pattern rather than one exact hostname.
+pub fn is_wildcard_host(host: &str) -> bool {
+    host.contains(['*', '?', '['])
+}
+
 /// Immutable host matcher precompiled from a route list.
 ///
 /// Exact hostnames resolve with one map lookup; wildcard patterns (`*`, `?`,
@@ -129,7 +134,7 @@ impl HostMatcher {
         for (index, route) in routes.iter().enumerate() {
             for pattern in &route.host_patterns {
                 let pattern = pattern.to_ascii_lowercase();
-                if pattern.contains(['*', '?', '[']) {
+                if is_wildcard_host(&pattern) {
                     let compiled = glob::Pattern::new(&pattern).unwrap_or_else(|_| {
                         glob::Pattern::new(&glob::Pattern::escape(&pattern))
                             .expect("escaped pattern is valid")
@@ -205,7 +210,7 @@ fn build_portal_html(http_port: u16, routes: &[ResolvedRoute]) -> String {
         .iter()
         .flat_map(|route| &route.host_patterns)
         .map(|host| {
-            if host.contains('*') {
+            if is_wildcard_host(host) {
                 format!("<li>{}</li>", escape_html(host))
             } else {
                 let url = format!("http://{host}:{http_port}/");
@@ -328,7 +333,7 @@ fn route_entries(service: &ServiceDef, route: &ServiceRoute, http_port: u16) -> 
         .map(|host| RouteEntry {
             route_id: route.id.clone(),
             host: host.clone(),
-            url: (!host.contains('*')).then(|| format!("http://{host}:{http_port}/")),
+            url: (!is_wildcard_host(host)).then(|| format!("http://{host}:{http_port}/")),
             target: target.clone(),
         })
         .collect()
@@ -544,6 +549,10 @@ target_port_env = "UNSET_PORT"
         let html = table.portal_html();
         assert!(html.contains("<a href=\"http://minios3.localhost:2800/\">minios3.localhost</a>"));
         assert!(html.contains("<li>*.minios3.localhost</li>"));
+        for host in ["?.localhost", "[ab].localhost"] {
+            let html = build_portal_html(2800, &[route("glob", &[host], 1)]);
+            assert!(html.contains(&format!("<li>{host}</li>")), "{html}");
+        }
         assert_eq!(table.find("s3browser.localhost").unwrap().id, "s3browser");
     }
 

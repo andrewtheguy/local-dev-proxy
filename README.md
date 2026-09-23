@@ -10,15 +10,19 @@ proxy and services with no window, controlled with signals.
 
 ## Installation
 
-Cross-platform (macOS, Windows, Linux). The binary embeds everything it needs; there is
-no runtime to install.
+Cross-platform (macOS, Windows, Linux). The binary embeds its UI, assets, and proxy; on
+macOS and Windows there is nothing else to install. On Linux it links the system
+fontconfig library (`libfontconfig.so.1`), which desktop distributions ship by default;
+on a minimal system install `libfontconfig1` (Debian/Ubuntu) or `fontconfig` (Fedora).
 
 ### Download a release binary
 
 Download the archive for your platform from the
 [Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
 
-- **macOS:** unzip `Local Dev Proxy.app` into `/Applications`. The command-line binary is
+- **macOS:** download `local-dev-proxy-macos-arm64.zip` (Apple silicon) or
+  `local-dev-proxy-macos-x86_64.zip` (Intel) and unzip `Local Dev Proxy.app` into
+  `/Applications`. The command-line binary is
   `/Applications/Local Dev Proxy.app/Contents/MacOS/local-dev-proxy`.
 - **Windows:** extract `local-dev-proxy.exe`.
 - **Linux:** extract `local-dev-proxy` and put it on your `PATH`. The window needs an X11

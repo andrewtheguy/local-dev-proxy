@@ -26,6 +26,8 @@ const TARGET_KEYS: &[&str] = &[
     "target_socket",
     "target_socket_env",
 ];
+/// Service names become log file names; `manager` is the application's own log.
+const RESERVED_SERVICE_NAMES: &[&str] = &["manager"];
 pub const ALLOWED_TARGET_HOSTS: &[&str] = &["127.0.0.1", "::1", "localhost"];
 const DEFAULT_TARGET_HOST: &str = "localhost";
 
@@ -146,6 +148,20 @@ fn build_manifest(data: &Table) -> Result<Manifest, ConfigError> {
 }
 
 fn parse_service(name: &str, raw: &Value) -> Result<ServiceDef, ConfigError> {
+    let valid_name = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !valid_name {
+        return Err(ConfigError::new(format!(
+            "service name {name:?} may only contain ASCII letters, digits, '_', and '-'"
+        )));
+    }
+    if RESERVED_SERVICE_NAMES.contains(&name) {
+        return Err(ConfigError::new(format!(
+            "service name {name:?} is reserved"
+        )));
+    }
     let prefix = format!("services.{name}");
     let Value::Table(raw) = raw else {
         return Err(ConfigError::new(format!("{prefix} must be a table")));
@@ -605,6 +621,22 @@ target_port = 3000
             "services.app contains unknown keys: port"
         );
         assert!(error_of("http_port = ").starts_with("Invalid TOML: "));
+    }
+
+    #[test]
+    fn service_names_must_be_safe_and_unreserved() {
+        for name in ["\"../escape\"", "\"has space\"", "\"\""] {
+            assert!(
+                error_of(&with_header(&format!("[services.{name}]\n")))
+                    .contains("may only contain"),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            error_of(&with_header("[services.manager]\n")),
+            "service name \"manager\" is reserved"
+        );
+        assert!(parse_manifest(&with_header("[services.my-app_2]\n")).is_ok());
     }
 
     #[test]

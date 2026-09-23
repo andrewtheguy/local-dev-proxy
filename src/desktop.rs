@@ -338,7 +338,10 @@ impl Controller {
         let spawned = std::thread::Builder::new()
             .name("manager-job".to_owned())
             .spawn(move || {
-                let _ = sender.send(work(&mut lock(&manager)));
+                // Release the manager before waking the UI, so its refresh
+                // after the job can take the lock.
+                let outcome = work(&mut lock(&manager));
+                let _ = sender.send(outcome);
             });
         if let Err(err) = spawned {
             self.finish_job(Err(format!("could not start a worker thread: {err}")));
