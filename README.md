@@ -259,3 +259,24 @@ read/validate/save). `frontend::Frontend` is the trait a UI implements:
 `desktop::Desktop` is the Slint manager window and tray (`ui/app.slint`), and
 `frontend::Headless` runs without a UI. The desktop tests drive the real window on
 Slint's headless testing backend, so they need no display.
+
+### Running CI locally
+
+`ci/` runs the steps of `.github/workflows/ci.yml` (fmt, clippy with `-D warnings`,
+tests) against the working tree as it is, uncommitted changes included, on each of the
+three platforms the workflow covers. `ci/unix/ci.sh` and `ci/windows/ci.ps1` are the
+workflow's steps and run natively on the machine they are invoked on; `ci/unix/remote.sh`
+and `ci/windows/remote.ps1` ship the tree to another machine over ssh and run them there.
+The remote drivers are thin wrappers over the sibling
+[`devtools`](https://github.com/andrewtheguy/devtools) repo (cloned next to this one, or
+`DEVTOOLS_DIR`), parameterized by `.devtools.conf`.
+
+```sh
+ci/unix/ci.sh                        # this machine (Linux or macOS)
+ci/unix/remote.sh -H macvm           # the macOS VM
+pwsh -File ci/windows/remote.ps1     # the Windows CI VM
+```
+
+Both remote drivers also take `shell`, `doctor` (report the machine's toolchain, change
+nothing) and `clean` (drop its cargo target cache). When a `ci.*` script and the workflow
+disagree, the workflow is right and the script is stale.

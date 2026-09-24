@@ -3,3 +3,4 @@ data/
 logs/
 tmp/
 .claude/settings.local.json
+CLAUDE.local.md
