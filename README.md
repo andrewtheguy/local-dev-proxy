@@ -121,13 +121,14 @@ service's combined stdout/stderr goes to `logs/<service>.log`.
 The manager window has three tabs:
 
 - **Services** — each service's status, PID, restart count, and last exit code. Select a
-  row to start, stop, or restart it; double-click a row to open its log. **Edit Config** opens the configuration editor (with TOML syntax highlighting)
-  without stopping anything; **Cancel** discards unsaved edits and goes back to the
-  service list. **Save** only writes the file; **Apply** validates and saves it, then
-  restarts the proxy and every service only if the configuration differs from the running
-  one (comment and formatting changes do not count). While stopped the button is **Start
-  All** instead. If the configuration fails to start, everything stays stopped and the
-  editor opens with the error.
+  row to start, stop, or restart it; double-click a row to open its log. **Edit Config**
+  opens the configuration editor (with TOML syntax highlighting) without stopping
+  anything; **Cancel** discards unsaved edits and goes back to the service list. **Save**
+  only writes the file; **Apply** validates and saves it, then restarts the proxy and
+  every service only if the configuration differs from the running one (comment and
+  formatting changes do not count). While stopped the button is **Start All** instead. If
+  the configuration fails to start, everything stays stopped and the editor opens with
+  the error.
 - **Logs** — the tail of a service's log, with a line count and **Follow** to keep it
   updating.
 - **Routes** — every service's hosts and targets. Click a URL to open it in the browser.
