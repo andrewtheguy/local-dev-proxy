@@ -480,9 +480,11 @@ target_socket_env = "APP_SOCKET"
         let manifest = parse_manifest(SOCKETS_TOML).unwrap();
         let base = Path::new("/profile");
         let routes = resolve_routes(&manifest, &no_env, Some(base)).unwrap();
+        // A rooted path with no drive is relative on Windows, so it is
+        // absolutized like the env socket below; elsewhere this is a no-op.
         assert_eq!(
             routes[0].target,
-            ResolvedTarget::Unix("/tmp/fixed.sock".into())
+            ResolvedTarget::Unix(std::path::absolute("/tmp/fixed.sock").unwrap())
         );
         assert_eq!(
             routes[1].target,

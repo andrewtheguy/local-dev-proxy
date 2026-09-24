@@ -90,9 +90,19 @@ pub fn activate_running_instance(paths: &ProjectPaths, timeout: Duration) -> boo
 
 fn send_activation(name: &str) -> io::Result<()> {
     let mut stream = Stream::connect(name.to_ns_name::<GenericNamespaced>()?)?;
-    stream.set_send_timeout(Some(CLIENT_IO_TIMEOUT))?;
+    timeout_if_supported(stream.set_send_timeout(Some(CLIENT_IO_TIMEOUT)))?;
     stream.write_all(&[ACTIVATE_MESSAGE])?;
     stream.flush()
+}
+
+/// Windows named pipes have no I/O timeouts, and `interprocess` reports that
+/// as `Unsupported` rather than ignoring it. The exchange is one byte against
+/// a listener that is known to be alive, so going without is acceptable there.
+fn timeout_if_supported(result: io::Result<()>) -> io::Result<()> {
+    match result {
+        Err(err) if err.kind() == io::ErrorKind::Unsupported => Ok(()),
+        other => other,
+    }
 }
 
 /// Receives activation requests from later launches on a background thread.
@@ -128,7 +138,9 @@ impl ActivationServer {
                     match listener.accept() {
                         Ok(mut stream) => {
                             let _ = stream.set_nonblocking(false);
-                            let _ = stream.set_recv_timeout(Some(CLIENT_IO_TIMEOUT));
+                            let _ = timeout_if_supported(
+                                stream.set_recv_timeout(Some(CLIENT_IO_TIMEOUT)),
+                            );
                             let mut message = [0u8; 1];
                             if stream.read_exact(&mut message).is_ok()
                                 && message[0] == ACTIVATE_MESSAGE
@@ -214,9 +226,17 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(2)).unwrap();
 
         drop(server);
-        assert!(!activate_running_instance(
-            &paths,
-            Duration::from_millis(200)
-        ));
+        // A child that another test forked but has not yet exec'd holds a
+        // copy of every open descriptor, the listener's included, so the
+        // socket can outlive the server for a moment. Wait for that window
+        // to close rather than sampling once.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while activate_running_instance(&paths, Duration::ZERO) {
+            assert!(
+                Instant::now() < deadline,
+                "activation still reached something after the server was dropped"
+            );
+            std::thread::sleep(CONNECT_RETRY);
+        }
     }
 }
