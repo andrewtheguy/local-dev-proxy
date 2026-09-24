@@ -11,18 +11,25 @@ use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::Duration;
 
-use slint::{CloseRequestResponse, ComponentHandle, ModelRc, PlatformError, Timer, TimerMode};
+use slint::{
+    CloseRequestResponse, ComponentHandle, ModelRc, PlatformError, Timer, TimerMode, VecModel,
+};
 
 use crate::frontend::{AppEvent, Frontend};
 use crate::manager::{Manager, ManagerError};
 use crate::process::{ServiceSnapshot, ServiceStatus};
 use crate::routes::{RouteGroup, ServiceKind};
 
+mod syntax;
+
 mod ui {
     slint::include_modules!();
 }
 
-use ui::{Level, ManagerTray, ManagerWindow, RouteRow, ServiceRow, ServiceView};
+use ui::{
+    Level, ManagerTray, ManagerWindow, RouteRow, ServiceRow, ServiceView, TextPosition, TomlSyntax,
+    TomlToken, TomlTokenKind,
+};
 
 /// Matches the crash monitor's poll interval.
 const REFRESH_INTERVAL: Duration = Duration::from_secs(2);
@@ -154,6 +161,7 @@ impl Controller {
     ) -> Rc<Self> {
         window.set_version(crate::VERSION.into());
         window.set_mono_font(MONO_FONT.into());
+        install_toml_syntax(&window);
         Rc::new(Self {
             manager,
             window,
@@ -764,6 +772,42 @@ mod dock {
 
     #[cfg(not(target_os = "macos"))]
     pub fn set_icon_visible(_visible: bool) {}
+}
+
+fn install_toml_syntax(window: &ManagerWindow) {
+    let syntax = window.global::<TomlSyntax>();
+    syntax.on_tokenize(|text| {
+        let tokens: Vec<TomlToken> = syntax::tokenize(&text)
+            .into_iter()
+            .map(|token| TomlToken {
+                line: to_int(token.line),
+                column: to_int(token.column),
+                text: token.text.into(),
+                kind: match token.kind {
+                    syntax::Kind::Plain => TomlTokenKind::Plain,
+                    syntax::Kind::Comment => TomlTokenKind::Comment,
+                    syntax::Kind::Table => TomlTokenKind::Table,
+                    syntax::Kind::Key => TomlTokenKind::Key,
+                    syntax::Kind::String => TomlTokenKind::String,
+                    syntax::Kind::Number => TomlTokenKind::Number,
+                    syntax::Kind::Boolean => TomlTokenKind::Boolean,
+                    syntax::Kind::Punctuation => TomlTokenKind::Punctuation,
+                },
+            })
+            .collect();
+        ModelRc::new(VecModel::from(tokens))
+    });
+    syntax.on_position(|text, byte_offset| {
+        let (line, column) = syntax::position(&text, usize::try_from(byte_offset).unwrap_or(0));
+        TextPosition {
+            line: to_int(line),
+            column: to_int(column),
+        }
+    });
+}
+
+fn to_int(n: usize) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
 }
 
 #[cfg(test)]

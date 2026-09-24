@@ -124,7 +124,8 @@ The manager window has three tabs:
   row to start, stop, or restart it; double-click a row to open its log. **View Config**
   shows the running configuration; **Stop All & Edit Config** stops everything and opens
   the editor, where **Start All** validates, saves, and launches the edited file. If the
-  configuration fails to start, the editor opens with the error.
+  configuration fails to start, the editor opens with the error. Both views highlight
+  the TOML syntax.
 - **Logs** — the tail of a service's log, with a line count and **Follow** to keep it
   updating.
 - **Routes** — every service's hosts and targets. Click a URL to open it in the browser.

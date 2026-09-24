@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, ListView, Palette, SpinBox, TabWidget, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, ListView, Palette, ScrollView, SpinBox, TabWidget, TextEdit } from "std-widgets.slint";
 
 export enum ServiceView { services, readonly, edit }
 
@@ -24,6 +24,28 @@ export struct RouteRow {
     host: string,
     target: string,
     muted: bool,
+}
+
+export enum TomlTokenKind { plain, comment, table, key, string, number, boolean, punctuation }
+
+/// A highlighted run of TOML on one line; `column` counts characters.
+export struct TomlToken {
+    line: int,
+    column: int,
+    text: string,
+    kind: TomlTokenKind,
+}
+
+export struct TextPosition {
+    line: int,
+    column: int,
+}
+
+/// Implemented in Rust (`desktop::syntax`).
+export global TomlSyntax {
+    pure callback tokenize(text: string) -> [TomlToken];
+    /// The line and character column of a byte offset into the text.
+    pure callback position(text: string, byte-offset: int) -> TextPosition;
 }
 
 global Colors {
@@ -52,6 +74,29 @@ global Colors {
         }
         if status == "disabled" || status == "unmanaged" {
             return muted;
+        }
+        Palette.foreground
+    }
+
+    public pure function toml(kind: TomlTokenKind) -> brush {
+        let dark = Palette.color-scheme == ColorScheme.dark;
+        if kind == TomlTokenKind.comment {
+            return muted;
+        }
+        if kind == TomlTokenKind.table {
+            return dark ? #b692f6 : #6941c6;
+        }
+        if kind == TomlTokenKind.key {
+            return link;
+        }
+        if kind == TomlTokenKind.string {
+            return success;
+        }
+        if kind == TomlTokenKind.number {
+            return warning;
+        }
+        if kind == TomlTokenKind.boolean {
+            return dark ? #f670c7 : #c11574;
         }
         Palette.foreground
     }
@@ -206,6 +251,171 @@ component LogView inherits TextEdit {
         // Moving the cursor past the end scrolls the last line into view;
         // TextEdit clamps the offset to the text length.
         self.set-selection-offsets(2147483647, 2147483647);
+    }
+}
+
+/// A TOML editor with syntax highlighting: a TextInput with transparent text
+/// laid over the highlighted tokens. Tokens are placed on a character grid, so
+/// `font-family` must be monospace. The TextInput draws its caret in the (now
+/// invisible) text color, so this draws its own.
+component TomlEdit inherits Rectangle {
+    in property <string> font-family;
+    in property <bool> read-only;
+    in property <bool> enabled: true;
+    in-out property <string> text <=> input.text;
+    callback edited(text: string);
+
+    private property <length> inset: 8px;
+    private property <[TomlToken]> tokens: TomlSyntax.tokenize(root.text);
+    private property <length> char-width: cell.preferred-width / 100;
+    // A line's own height is rounded up; the pitch of stacked lines is not.
+    private property <length> line-height: (rows.preferred-height - cell.preferred-height) / 10;
+    private property <TextPosition> caret: TomlSyntax.position(root.text, input.cursor-position-byte-offset);
+    private property <bool> blink-on: true;
+    // IME composition text is only drawn by the TextInput itself.
+    private property <bool> composing: input.preedit-text != "";
+
+    accessible-role: text-input;
+    accessible-enabled: root.enabled;
+    accessible-value <=> text;
+    accessible-read-only: root.read-only;
+    accessible-action-set-value(v) => {
+        text = v;
+        edited(v);
+    }
+    accessible-action-set-selection-offsets(anchor, focus) => {
+        input.set-selection-offsets(anchor, focus);
+    }
+    forward-focus: input;
+
+    background: Palette.control-background;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: input.has-focus ? Palette.accent-background : Palette.border;
+
+    changed caret => {
+        blink-on = true;
+    }
+
+    cell := Text {
+        visible: false;
+        text: "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
+        font-family: root.font-family;
+    }
+
+    rows := Text {
+        visible: false;
+        text: "0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0";
+        font-family: root.font-family;
+    }
+
+    Timer {
+        interval: 500ms;
+        running: input.has-focus && !root.read-only;
+        triggered => {
+            root.blink-on = !root.blink-on;
+        }
+    }
+
+    ContextMenuArea {
+        enabled: root.enabled;
+        Menu {
+            MenuItem {
+                title: "Cut";
+                enabled: !root.read-only && root.enabled;
+                activated => {
+                    input.cut();
+                }
+            }
+
+            MenuItem {
+                title: "Copy";
+                enabled: !root.text.is-empty;
+                activated => {
+                    input.copy();
+                }
+            }
+
+            MenuItem {
+                title: "Paste";
+                enabled: !root.read-only && root.enabled;
+                activated => {
+                    input.paste();
+                }
+            }
+
+            MenuItem {
+                title: "Select All";
+                enabled: !root.text.is-empty;
+                activated => {
+                    input.select-all();
+                }
+            }
+        }
+
+        scroll-view := ScrollView {
+            x: root.inset;
+            y: root.inset;
+            width: parent.width - 2 * root.inset;
+            height: parent.height - 2 * root.inset;
+            content-width: max(self.visible-width, input.preferred-width + root.char-width);
+            content-height: max(self.visible-height, input.preferred-height);
+
+            Rectangle {
+                visible: !root.composing;
+                opacity: root.enabled ? 1 : 0.5;
+                for token in root.tokens: Text {
+                    x: token.column * root.char-width;
+                    y: token.line * root.line-height;
+                    height: root.line-height;
+                    text: token.text;
+                    font-family: root.font-family;
+                    color: Colors.toml(token.kind);
+                }
+            }
+
+            input := TextInput {
+                single-line: false;
+                wrap: no-wrap;
+                font-family: root.font-family;
+                enabled: root.enabled;
+                read-only: root.read-only;
+                // Not fully transparent: the renderer then skips the TextInput
+                // entirely, selection included.
+                color: root.composing ? Palette.foreground : #00000001;
+                selection-background-color: Palette.selection-background;
+                selection-foreground-color: Palette.selection-foreground;
+                page-height: scroll-view.visible-height;
+                // The editor itself is the accessible element.
+                accessible-role: none;
+
+                edited => {
+                    root.edited(self.text);
+                }
+
+                cursor-position-changed(cpos) => {
+                    if (cpos.x + scroll-view.content-x < 0px) {
+                        scroll-view.content-x = min(0px, max(scroll-view.visible-width - self.width, -cpos.x));
+                    } else if (cpos.x + scroll-view.content-x > scroll-view.visible-width - root.char-width) {
+                        scroll-view.content-x = min(0px, max(scroll-view.visible-width - self.width, scroll-view.visible-width - cpos.x - root.char-width));
+                    }
+                    if (cpos.y + scroll-view.content-y < 0px) {
+                        scroll-view.content-y = min(0px, max(scroll-view.visible-height - self.height, -cpos.y));
+                    } else if (cpos.y + scroll-view.content-y > scroll-view.visible-height - root.line-height) {
+                        scroll-view.content-y = min(0px, max(scroll-view.visible-height - self.height, scroll-view.visible-height - cpos.y - root.line-height));
+                    }
+                }
+            }
+
+            Rectangle {
+                visible: input.has-focus && root.enabled && !root.read-only && !root.composing && root.blink-on && input.anchor-position-byte-offset == input.cursor-position-byte-offset;
+                x: root.caret.column * root.char-width;
+                y: root.caret.line * root.line-height;
+                width: 1.5px;
+                height: root.line-height;
+                background: Palette.foreground;
+            }
+        }
     }
 }
 
@@ -607,21 +817,19 @@ export component ManagerWindow inherits Window {
                             }
                         }
 
-                        if root.view == ServiceView.readonly: TextEdit {
+                        if root.view == ServiceView.readonly: TomlEdit {
                             accessible-label: "Configuration";
                             vertical-stretch: 1;
                             read-only: true;
-                            wrap: no-wrap;
                             font-family: root.mono-font;
                             text: root.config-text;
                         }
 
                         if root.view == ServiceView.edit: VerticalLayout {
                             spacing: 8px;
-                            TextEdit {
+                            TomlEdit {
                                 accessible-label: "Configuration editor";
                                 vertical-stretch: 1;
-                                wrap: no-wrap;
                                 font-family: root.mono-font;
                                 enabled: !root.busy;
                                 text <=> root.editor-text;
