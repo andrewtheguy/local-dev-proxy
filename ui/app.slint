@@ -297,10 +297,37 @@ export component ManagerWindow inherits Window {
     preferred-height: 680px;
     min-width: 720px;
     min-height: 500px;
+    forward-focus: shortcuts;
+
+    // Where each group of controls lives, so a shortcut is inert exactly when
+    // its button is absent or disabled. Every button sits inside the Services
+    // tab except the Logs and Routes reloads.
+    private property <bool> on-services-tab: current-tab == 0;
+    private property <bool> in-service-list: on-services-tab && view == ServiceView.services;
+    private property <bool> editing: on-services-tab && view == ServiceView.edit;
+    private property <bool> viewing-config: on-services-tab && view == ServiceView.readonly;
+
+    function move-selection(delta: int) {
+        if (in-service-list && services.length > 0) {
+            root.service-selected(Math.max(0, Math.min(services.length - 1, selected-service + delta)));
+        }
+    }
+
+    // Reload whatever the current tab shows.
+    function refresh-current-tab() {
+        if (editing && !busy) {
+            root.reload-config();
+        } else if (current-tab == 1 && view != ServiceView.edit) {
+            root.refresh-logs();
+        } else if (current-tab == 2 && view != ServiceView.edit) {
+            root.reload-routes();
+        }
+    }
 
     MenuBar {
-        // The native macOS menu bar carries the standard Quit shortcut; other
-        // platforms keep the in-window Quit button and only gain the shortcut.
+        // The native macOS menu bar carries the standard Quit shortcut. Other
+        // platforms keep the in-window Quit button and get the shortcut from
+        // the KeyBinding below: an invisible menu bar's shortcuts do not fire.
         visible: Platform.os == OperatingSystemType.macos;
         Menu {
             title: "File";
@@ -314,303 +341,443 @@ export component ManagerWindow inherits Window {
         }
     }
 
-    VerticalLayout {
-        padding: 12px;
-        padding-top: 10px;
-        spacing: 8px;
+    // Keyboard shortcuts. Control is Command on macOS. Key events bubble up
+    // from the focused widget, so these fire wherever focus is; each one
+    // checks the same condition as the button it stands in for.
+    shortcuts := FocusScope {
+        width: 100%;
+        height: 100%;
 
-        HorizontalLayout {
-            Text {
-                text: "v" + root.version;
-                color: Colors.muted;
-                vertical-alignment: center;
-            }
-
-            Rectangle { }
-
-            Button {
-                text: "Quit";
-                clicked => {
+        KeyBinding {
+            keys: @keys(Control + "q");
+            activated => {
+                if (Platform.os != OperatingSystemType.macos) {
                     root.quit();
                 }
             }
         }
 
-        TabWidget {
-            current-index <=> root.current-tab;
+        KeyBinding {
+            keys: @keys(Control + "1");
+            activated => {
+                root.current-tab = 0;
+            }
+        }
 
-            Tab {
-                title: "Services";
-                VerticalLayout {
-                    padding: 12px;
-                    spacing: 8px;
+        KeyBinding {
+            keys: @keys(Control + "2");
+            activated => {
+                root.current-tab = 1;
+            }
+        }
 
-                    Banner {
-                        text: root.banner;
-                        level: root.banner-level;
+        KeyBinding {
+            keys: @keys(Control + "3");
+            activated => {
+                root.current-tab = 2;
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + "e");
+            activated => {
+                if ((root.in-service-list || root.viewing-config) && !root.busy) {
+                    root.toggle-view-config();
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + Shift + "e");
+            activated => {
+                if (root.viewing-config && !root.busy) {
+                    root.stop-to-edit();
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + Return);
+            activated => {
+                if (root.editing && !root.busy) {
+                    root.start-all();
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + "k");
+            activated => {
+                if (root.editing && !root.busy) {
+                    root.validate();
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + "s");
+            activated => {
+                if (root.editing && !root.busy) {
+                    root.save();
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + "r");
+            activated => {
+                root.refresh-current-tab();
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + DownArrow);
+            activated => {
+                root.move-selection(1);
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + UpArrow);
+            activated => {
+                root.move-selection(-1);
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + Shift + "s");
+            activated => {
+                if (root.in-service-list && root.can-control && !root.selection.running) {
+                    root.start-service();
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + Shift + "x");
+            activated => {
+                if (root.in-service-list && root.can-control && root.selection.running) {
+                    root.stop-service();
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + Shift + "r");
+            activated => {
+                if (root.in-service-list && root.can-control && root.selection.running) {
+                    root.restart-service();
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Control + "l");
+            activated => {
+                if (root.in-service-list && root.has-selection) {
+                    root.open-service-logs(root.selected-service);
+                }
+            }
+        }
+
+        VerticalLayout {
+            padding: 12px;
+            padding-top: 10px;
+            spacing: 8px;
+
+            HorizontalLayout {
+                Text {
+                    text: "v" + root.version;
+                    color: Colors.muted;
+                    vertical-alignment: center;
+                }
+
+                Rectangle { }
+
+                Button {
+                    text: "Quit";
+                    clicked => {
+                        root.quit();
                     }
+                }
+            }
 
-                    HorizontalLayout {
+            TabWidget {
+                current-index <=> root.current-tab;
+
+                Tab {
+                    title: "Services";
+                    VerticalLayout {
+                        padding: 12px;
                         spacing: 8px;
-                        if root.view != ServiceView.edit: Button {
-                            text: root.view == ServiceView.readonly ? "Back to Services" : "View Config";
-                            enabled: !root.busy;
-                            clicked => {
-                                root.toggle-view-config();
-                            }
-                        }
-                        if root.view == ServiceView.readonly: Button {
-                            text: "Stop All & Edit Config";
-                            enabled: !root.busy;
-                            clicked => {
-                                root.stop-to-edit();
-                            }
-                        }
-                        if root.view == ServiceView.edit: Button {
-                            text: "Start All";
-                            primary: true;
-                            enabled: !root.busy;
-                            clicked => {
-                                root.start-all();
-                            }
-                        }
-                        Rectangle { }
 
-                        Text {
-                            text: root.status-text;
-                            color: Colors.level(root.status-level);
-                            font-weight: 600;
-                            vertical-alignment: center;
-                        }
-                    }
-
-                    if root.view == ServiceView.services: VerticalLayout {
-                        spacing: 8px;
-                        ServiceTable {
-                            vertical-stretch: 1;
-                            rows: root.services;
-                            selected: root.selected-service;
-                            row-clicked(index) => {
-                                root.service-selected(index);
-                            }
-                            row-double-clicked(index) => {
-                                root.open-service-logs(index);
-                            }
-                        }
-
-                        Rectangle {
-                            border-width: 1px;
-                            border-radius: 4px;
-                            border-color: Palette.border;
-                            VerticalLayout {
-                                padding: 10px;
-                                spacing: 8px;
-                                Text {
-                                    font-weight: 600;
-                                    text: !root.has-selection ? "Selected service — click a row to control it" : root.selection.controllable ? "Selected service: \{root.selection.name} (\{root.selection.status})" : "Selected service: \{root.selection.name} (\{root.selection.status} — not controllable)";
-                                }
-
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    alignment: start;
-                                    Button {
-                                        text: "Start";
-                                        enabled: root.can-control && !root.selection.running;
-                                        clicked => {
-                                            root.start-service();
-                                        }
-                                    }
-
-                                    Button {
-                                        text: "Stop";
-                                        enabled: root.can-control && root.selection.running;
-                                        clicked => {
-                                            root.stop-service();
-                                        }
-                                    }
-
-                                    Button {
-                                        text: "Restart";
-                                        enabled: root.can-control && root.selection.running;
-                                        clicked => {
-                                            root.restart-service();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if root.view == ServiceView.readonly: TextEdit {
-                        accessible-label: "Configuration";
-                        vertical-stretch: 1;
-                        read-only: true;
-                        wrap: no-wrap;
-                        font-family: root.mono-font;
-                        text: root.config-text;
-                    }
-
-                    if root.view == ServiceView.edit: VerticalLayout {
-                        spacing: 8px;
-                        TextEdit {
-                            accessible-label: "Configuration editor";
-                            vertical-stretch: 1;
-                            wrap: no-wrap;
-                            font-family: root.mono-font;
-                            enabled: !root.busy;
-                            text <=> root.editor-text;
-                            edited(text) => {
-                                root.editor-edited(text);
-                            }
+                        Banner {
+                            text: root.banner;
+                            level: root.banner-level;
                         }
 
                         HorizontalLayout {
                             spacing: 8px;
-                            Button {
-                                text: "Validate";
+                            if root.view != ServiceView.edit: Button {
+                                text: root.view == ServiceView.readonly ? "Back to Services" : "View Config";
                                 enabled: !root.busy;
                                 clicked => {
-                                    root.validate();
+                                    root.toggle-view-config();
+                                }
+                            }
+                            if root.view == ServiceView.readonly: Button {
+                                text: "Stop All & Edit Config";
+                                enabled: !root.busy;
+                                clicked => {
+                                    root.stop-to-edit();
+                                }
+                            }
+                            if root.view == ServiceView.edit: Button {
+                                text: "Start All";
+                                primary: true;
+                                enabled: !root.busy;
+                                clicked => {
+                                    root.start-all();
+                                }
+                            }
+                            Rectangle { }
+
+                            Text {
+                                text: root.status-text;
+                                color: Colors.level(root.status-level);
+                                font-weight: 600;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        if root.view == ServiceView.services: VerticalLayout {
+                            spacing: 8px;
+                            ServiceTable {
+                                vertical-stretch: 1;
+                                rows: root.services;
+                                selected: root.selected-service;
+                                row-clicked(index) => {
+                                    root.service-selected(index);
+                                }
+                                row-double-clicked(index) => {
+                                    root.open-service-logs(index);
                                 }
                             }
 
-                            Button {
-                                text: "Save";
+                            Rectangle {
+                                border-width: 1px;
+                                border-radius: 4px;
+                                border-color: Palette.border;
+                                VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 8px;
+                                    Text {
+                                        font-weight: 600;
+                                        text: !root.has-selection ? "Selected service — click a row to control it" : root.selection.controllable ? "Selected service: \{root.selection.name} (\{root.selection.status})" : "Selected service: \{root.selection.name} (\{root.selection.status} — not controllable)";
+                                    }
+
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        alignment: start;
+                                        Button {
+                                            text: "Start";
+                                            enabled: root.can-control && !root.selection.running;
+                                            clicked => {
+                                                root.start-service();
+                                            }
+                                        }
+
+                                        Button {
+                                            text: "Stop";
+                                            enabled: root.can-control && root.selection.running;
+                                            clicked => {
+                                                root.stop-service();
+                                            }
+                                        }
+
+                                        Button {
+                                            text: "Restart";
+                                            enabled: root.can-control && root.selection.running;
+                                            clicked => {
+                                                root.restart-service();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.view == ServiceView.readonly: TextEdit {
+                            accessible-label: "Configuration";
+                            vertical-stretch: 1;
+                            read-only: true;
+                            wrap: no-wrap;
+                            font-family: root.mono-font;
+                            text: root.config-text;
+                        }
+
+                        if root.view == ServiceView.edit: VerticalLayout {
+                            spacing: 8px;
+                            TextEdit {
+                                accessible-label: "Configuration editor";
+                                vertical-stretch: 1;
+                                wrap: no-wrap;
+                                font-family: root.mono-font;
                                 enabled: !root.busy;
-                                clicked => {
-                                    root.save();
+                                text <=> root.editor-text;
+                                edited(text) => {
+                                    root.editor-edited(text);
                                 }
                             }
 
-                            Button {
-                                text: "Reload from disk";
-                                enabled: !root.busy;
-                                clicked => {
-                                    root.reload-config();
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Button {
+                                    text: "Validate";
+                                    enabled: !root.busy;
+                                    clicked => {
+                                        root.validate();
+                                    }
+                                }
+
+                                Button {
+                                    text: "Save";
+                                    enabled: !root.busy;
+                                    clicked => {
+                                        root.save();
+                                    }
+                                }
+
+                                Button {
+                                    text: "Reload from disk";
+                                    enabled: !root.busy;
+                                    clicked => {
+                                        root.reload-config();
+                                    }
+                                }
+
+                                Rectangle { }
+
+                                if root.dirty: Text {
+                                    text: "● unsaved changes";
+                                    color: Colors.warning;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Tab {
+                    title: "Logs";
+                    if root.view == ServiceView.edit: Text {
+                        text: "Unavailable while editing the configuration.";
+                        color: Colors.muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    if root.view != ServiceView.edit: VerticalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: "Service:";
+                                vertical-alignment: center;
+                            }
+
+                            ComboBox {
+                                width: 220px;
+                                model: root.log-names;
+                                current-index <=> root.log-index;
+                                selected => {
+                                    root.log-selected();
+                                }
+                            }
+
+                            Text {
+                                text: "Lines:";
+                                vertical-alignment: center;
+                            }
+
+                            SpinBox {
+                                width: 110px;
+                                minimum: 10;
+                                maximum: 5000;
+                                step-size: 10;
+                                value <=> root.log-lines;
+                                edited => {
+                                    root.refresh-logs();
+                                }
+                            }
+
+                            CheckBox {
+                                text: "Follow";
+                                checked <=> root.log-follow;
+                                toggled => {
+                                    if self.checked {
+                                        root.refresh-logs();
+                                    }
                                 }
                             }
 
                             Rectangle { }
 
-                            if root.dirty: Text {
-                                text: "● unsaved changes";
-                                color: Colors.warning;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-                }
-            }
-
-            Tab {
-                title: "Logs";
-                if root.view == ServiceView.edit: Text {
-                    text: "Unavailable while editing the configuration.";
-                    color: Colors.muted;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-
-                if root.view != ServiceView.edit: VerticalLayout {
-                    padding: 12px;
-                    spacing: 8px;
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Text {
-                            text: "Service:";
-                            vertical-alignment: center;
-                        }
-
-                        ComboBox {
-                            width: 220px;
-                            model: root.log-names;
-                            current-index <=> root.log-index;
-                            selected => {
-                                root.log-selected();
-                            }
-                        }
-
-                        Text {
-                            text: "Lines:";
-                            vertical-alignment: center;
-                        }
-
-                        SpinBox {
-                            width: 110px;
-                            minimum: 10;
-                            maximum: 5000;
-                            step-size: 10;
-                            value <=> root.log-lines;
-                            edited => {
-                                root.refresh-logs();
-                            }
-                        }
-
-                        CheckBox {
-                            text: "Follow";
-                            checked <=> root.log-follow;
-                            toggled => {
-                                if self.checked {
+                            Button {
+                                text: "Refresh";
+                                clicked => {
                                     root.refresh-logs();
                                 }
                             }
                         }
 
-                        Rectangle { }
+                        LogView {
+                            accessible-label: "Service log";
+                            vertical-stretch: 1;
+                            font-family: root.mono-font;
+                            text: root.log-text;
+                        }
+                    }
+                }
 
-                        Button {
-                            text: "Refresh";
-                            clicked => {
-                                root.refresh-logs();
+                Tab {
+                    title: "Routes";
+                    if root.view == ServiceView.edit: Text {
+                        text: "Unavailable while editing the configuration.";
+                        color: Colors.muted;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    if root.view != ServiceView.edit: VerticalLayout {
+                        padding: 12px;
+                        spacing: 8px;
+                        Text {
+                            text: "Routes are grouped by service. Click a URL row to open it.";
+                            wrap: word-wrap;
+                        }
+
+                        Banner {
+                            text: root.routes-banner;
+                            level: Level.error;
+                        }
+
+                        RouteTable {
+                            vertical-stretch: 1;
+                            rows: root.routes;
+                            open-url(url) => {
+                                Platform.open-url(url);
                             }
                         }
-                    }
 
-                    LogView {
-                        accessible-label: "Service log";
-                        vertical-stretch: 1;
-                        font-family: root.mono-font;
-                        text: root.log-text;
-                    }
-                }
-            }
-
-            Tab {
-                title: "Routes";
-                if root.view == ServiceView.edit: Text {
-                    text: "Unavailable while editing the configuration.";
-                    color: Colors.muted;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-
-                if root.view != ServiceView.edit: VerticalLayout {
-                    padding: 12px;
-                    spacing: 8px;
-                    Text {
-                        text: "Routes are grouped by service. Click a URL row to open it.";
-                        wrap: word-wrap;
-                    }
-
-                    Banner {
-                        text: root.routes-banner;
-                        level: Level.error;
-                    }
-
-                    RouteTable {
-                        vertical-stretch: 1;
-                        rows: root.routes;
-                        open-url(url) => {
-                            Platform.open-url(url);
-                        }
-                    }
-
-                    HorizontalLayout {
-                        alignment: start;
-                        Button {
-                            text: "Reload";
-                            clicked => {
-                                root.reload-routes();
+                        HorizontalLayout {
+                            alignment: start;
+                            Button {
+                                text: "Reload";
+                                clicked => {
+                                    root.reload-routes();
+                                }
                             }
                         }
                     }
