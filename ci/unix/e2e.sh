@@ -7,9 +7,9 @@
 #
 # The scenario launches the manager against a throwaway profile whose one
 # service is a busybox httpd, then walks every keyboard shortcut: select the
-# service, stop, start and restart it, open its log, the routes and the
-# read-only configuration, stop everything to edit, save, validate, start
-# again, and quit. After each step it checks what a user would check: the
+# service, stop, start and restart it, open its log and the routes, edit the
+# configuration while it keeps running, save, validate, apply it unchanged
+# (nothing restarts), apply a change (everything restarts), and quit. After each step it checks what a user would check: the
 # proxy's answer over HTTP, and the text on screen (a screenshot of the
 # session, read back with tesseract). tmp/e2e/ keeps the numbered screenshots
 # and the app's logs, for looking at after a failure.
@@ -205,21 +205,32 @@ key ctrl+3
 # The target column; tesseract skips the blue URL text.
 expect_screen routes "localhost:$web_port"
 key ctrl+1
-key ctrl+e
-expect_screen config 'Viewing configuration'
 
-# Stop everything and edit, then start it all again.
-key ctrl+shift+e
-expect_screen editing 'Editing configuration'
-expect_http 'proxy down while editing' web.localhost 000
+# Edit while everything keeps running; applying it unchanged restarts nothing.
+key ctrl+e
+expect_screen editing 'services keep running'
+expect_http 'proxy up while editing' web.localhost 200
 key ctrl+s
 expect_screen saved '\bsaved\b'
 key ctrl+k
 # Word-bounded: the banner says "validates".
 expect_screen valid '\bvalid\b'
 key ctrl+Return
-expect_screen restarted-all 'saved.{1,3}started'
-expect_http 'started again' web.localhost 200
+expect_screen unchanged 'no changes'
+expect_http 'still up after an unchanged apply' web.localhost 200
+grep -c 'web starting on' "$profile/logs/web.log" | grep -qx 3 || fail 'an unchanged apply restarted the service'
+
+# A changed configuration (written to disk; the editor loads it) restarts
+# everything with it.
+new_web_port=$(free_port)
+sed -i "s/WEB_PORT = \"$web_port\"/WEB_PORT = \"$new_web_port\"/" "$profile/services.toml"
+key ctrl+e
+expect_screen edited "$new_web_port"
+key ctrl+Return
+expect_screen restarted-all 'saved.{1,3}restarted'
+expect_http 'restarted with the change' web.localhost 200
+grep -q "web starting on $new_web_port" "$profile/logs/web.log" || fail 'the service did not restart on the new port'
+web_port=$new_web_port
 
 # Quit takes the service down with it.
 key ctrl+q
