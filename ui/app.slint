@@ -600,7 +600,7 @@ export component ManagerWindow inherits Window {
         KeyBinding {
             keys: @keys(Escape);
             activated => {
-                if (root.editing && root.running && !root.busy) {
+                if (root.editing && !root.busy) {
                     root.cancel-edit();
                 }
             }
@@ -841,8 +841,7 @@ export component ManagerWindow inherits Window {
                                     }
                                 }
 
-                                // Nothing to go back to while stopped.
-                                if root.running: Button {
+                                Button {
                                     text: "Cancel";
                                     enabled: !root.busy;
                                     clicked => {

@@ -963,6 +963,14 @@ mod tests {
                         .starts_with("No services.toml exists yet")
                 );
 
+                // Cancel goes back to the service list while stopped, too.
+                type_config(window, "# discarded\n");
+                click(window, "Cancel");
+                assert_eq!(window.get_view(), ServiceView::Services);
+                click(window, "Edit Config");
+                assert_eq!(window.get_view(), ServiceView::Edit);
+                assert_eq!(window.get_editor_text(), "");
+
                 type_config(window, "http_port = \"x\"\nbind = [\"127.0.0.1\"]");
                 assert!(window.get_dirty());
                 click(window, "Validate");
