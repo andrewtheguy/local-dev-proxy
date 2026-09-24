@@ -280,6 +280,9 @@ component TomlEdit inherits Rectangle {
     accessible-value <=> text;
     accessible-read-only: root.read-only;
     accessible-action-set-value(v) => {
+        if (root.read-only || !root.enabled) {
+            return;
+        }
         text = v;
         edited(v);
     }
