@@ -131,26 +131,18 @@ jobs:
 
   build-macos:
     needs: setup
-    strategy:
-      matrix:
-        include:
-          - target: aarch64-apple-darwin
-            suffix: macos-arm64
-          # Cross-compiled for Intel Macs on the Apple silicon runner.
-          - target: x86_64-apple-darwin
-            suffix: macos-amd64
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-${{ matrix.target }}
+          shared-key: release-aarch64-apple-darwin
 
       - name: Build release
-        run: cargo build --locked --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --target aarch64-apple-darwin
 
       - name: Package app (.dmg, unsigned)
         # Unsigned: browser downloads get the quarantine attribute; the README
@@ -162,18 +154,18 @@ jobs:
           staging="dist/dmg"
           app="$staging/Local Dev Proxy.app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          cp "target/${{ matrix.target }}/release/local-dev-proxy" "$app/Contents/MacOS/"
+          cp "target/aarch64-apple-darwin/release/local-dev-proxy" "$app/Contents/MacOS/"
           cp assets/dock-icon.icns "$app/Contents/Resources/"
           # Bundle versions are numeric only, so drop any prerelease suffix.
           sed "s/@VERSION@/${VERSION%%-*}/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
           ln -s /Applications "$staging/Applications"
           hdiutil create -volname "Local Dev Proxy" -srcfolder "$staging" -ov -format UDZO \
-            "dist/local-dev-proxy-${{ matrix.suffix }}.dmg"
+            "dist/local-dev-proxy-macos-arm64.dmg"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.suffix }}
-          path: dist/local-dev-proxy-${{ matrix.suffix }}.dmg
+          name: release-macos-arm64
+          path: dist/local-dev-proxy-macos-arm64.dmg
           if-no-files-found: error
 
   build-windows:

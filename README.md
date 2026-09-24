@@ -20,9 +20,8 @@ on a minimal system install `libfontconfig1` (Debian/Ubuntu) or `fontconfig` (Fe
 Download the file for your platform from the
 [Releases page](https://github.com/andrewtheguy/local-dev-proxy/releases):
 
-- **macOS:** open `local-dev-proxy-macos-arm64.dmg` (Apple silicon) or
-  `local-dev-proxy-macos-amd64.dmg` (Intel) and drag `Local Dev Proxy.app` into
-  `/Applications`. The command-line binary is
+- **macOS (Apple silicon only):** open `local-dev-proxy-macos-arm64.dmg` and drag
+  `Local Dev Proxy.app` into `/Applications`. The command-line binary is
   `/Applications/Local Dev Proxy.app/Contents/MacOS/local-dev-proxy`.
 - **Windows:** download `local-dev-proxy-windows-amd64.exe` (stable releases only;
   prereleases have no Windows build).
