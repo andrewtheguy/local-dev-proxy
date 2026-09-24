@@ -129,6 +129,23 @@ The manager window has three tabs:
   updating.
 - **Routes** — every service's hosts and targets. Click a URL to open it in the browser.
 
+Every control also has a keyboard shortcut (Command instead of Ctrl on macOS). A
+shortcut does exactly what its button would do and is inert while that button is
+absent or disabled:
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl+1 / Ctrl+2 / Ctrl+3 | Services / Logs / Routes tab |
+| Ctrl+Up / Ctrl+Down | Select the previous / next service |
+| Ctrl+Shift+S / Ctrl+Shift+X / Ctrl+Shift+R | Start / Stop / Restart the selected service |
+| Ctrl+L | Open the selected service's log |
+| Ctrl+E | View Config, or back to the service list |
+| Ctrl+Shift+E | Stop All & Edit Config |
+| Ctrl+K / Ctrl+S | Validate / Save the configuration being edited |
+| Ctrl+Enter | Start All (validate, save, and launch the edited configuration) |
+| Ctrl+R | Reload what the current tab shows: the editor from disk, the log, or the routes |
+| Ctrl+Q | Quit |
+
 Only one instance runs per profile. Launching it again while it is running brings the
 running instance's window to the front and exits immediately (a headless instance only
 logs the request).
@@ -280,3 +297,16 @@ pwsh -File ci/windows/remote.ps1     # the Windows CI VM
 Both remote drivers also take `shell`, `doctor` (report the machine's toolchain, change
 nothing) and `clean` (drop its cargo target cache). When a `ci.*` script and the workflow
 disagree, the workflow is right and the script is stale.
+
+### Desktop end-to-end test (Linux)
+
+`ci/unix/e2e.sh` launches the real binary against a throwaway profile, on the headless
+labwc session of the development host, and drives the manager window through its
+keyboard shortcuts: select, stop, start and restart a service, open its log, the routes
+and the read-only configuration, stop everything to edit, save, validate, start again,
+and quit. After each step it checks the proxy's answer over HTTP and the text on screen,
+read from a screenshot with tesseract. `ci/unix/ci.sh` runs it on a Linux host where the
+session is up and skips it elsewhere; `ci/unix/e2e.sh --available` says which. It needs
+the labwc session's `DISPLAY` in the systemd user environment (or
+`LOCAL_DEV_PROXY_E2E_DISPLAY`), plus xdotool, grim, ImageMagick, tesseract and busybox.
+The numbered screenshots and the app's logs are left in `tmp/e2e/`.

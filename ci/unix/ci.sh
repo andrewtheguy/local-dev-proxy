@@ -11,6 +11,11 @@
 # assumed present; `remote.sh doctor` checks for it. The desktop tests drive
 # the window on Slint's headless testing backend, so no display is needed.
 #
+# One step beyond ci.yml: on a Linux host with the headless labwc session
+# up, ci/unix/e2e.sh drives the real window through its keyboard shortcuts.
+# GitHub's runners have no compositor, so the workflow never runs it; a
+# machine without the session skips it, loudly.
+#
 # Not covered here, on purpose: the release-profile builds and the .dmg
 # packaging, which belong to release.yml.
 set -euo pipefail
@@ -40,6 +45,17 @@ cargo fmt --version
 step 'Check formatting' fmt --check
 step 'Clippy' clippy --locked --all-targets -- -D warnings
 step 'Test' test --locked
+
+echo ''
+echo '== Desktop e2e (Linux, local only) =='
+if [ "$(uname -s)" != Linux ]; then
+    echo '   SKIPPED: Linux only'
+elif reason=$(./ci/unix/e2e.sh --available); then
+    echo '   ./ci/unix/e2e.sh'
+    ./ci/unix/e2e.sh
+else
+    echo "   SKIPPED: $reason"
+fi
 
 echo ''
 echo 'all steps passed'
