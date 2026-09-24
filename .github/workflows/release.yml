@@ -135,14 +135,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-aarch64-apple-darwin
+          shared-key: release-macos-arm64
 
       - name: Build release
-        run: cargo build --locked --release --target aarch64-apple-darwin
+        run: cargo build --locked --release
 
       - name: Package app (.dmg, unsigned)
         # Unsigned: browser downloads get the quarantine attribute; the README
@@ -154,7 +152,7 @@ jobs:
           staging="dist/dmg"
           app="$staging/Local Dev Proxy.app"
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          cp "target/aarch64-apple-darwin/release/local-dev-proxy" "$app/Contents/MacOS/"
+          cp "target/release/local-dev-proxy" "$app/Contents/MacOS/"
           cp assets/dock-icon.icns "$app/Contents/Resources/"
           # Bundle versions are numeric only, so drop any prerelease suffix.
           sed "s/@VERSION@/${VERSION%%-*}/g" packaging/macos/Info.plist > "$app/Contents/Info.plist"
