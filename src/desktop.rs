@@ -16,7 +16,7 @@ use slint::{
 };
 
 use crate::frontend::{AppEvent, Frontend};
-use crate::manager::{Manager, ManagerError};
+use crate::manager::{Applied, Manager, ManagerError};
 use crate::process::{ServiceSnapshot, ServiceStatus};
 use crate::routes::{RouteGroup, ServiceKind};
 
@@ -187,16 +187,9 @@ impl Controller {
     fn bind(self: &Rc<Self>) {
         let window = &self.window;
         window.on_quit(self.handler(|c| c.quit()));
-        window.on_toggle_view_config(self.handler(|c| {
-            let view = c.state.borrow().view;
-            c.set_view(if view == ServiceView::Readonly {
-                ServiceView::Services
-            } else {
-                ServiceView::Readonly
-            });
-        }));
-        window.on_stop_to_edit(self.handler(|c| c.stop_to_edit()));
-        window.on_start_all(self.handler(|c| c.start_all()));
+        window.on_edit_config(self.handler(|c| c.set_view(ServiceView::Edit)));
+        window.on_cancel_edit(self.handler(|c| c.cancel_edit()));
+        window.on_apply(self.handler(|c| c.apply()));
         window.on_validate(self.handler(|c| {
             c.validate();
         }));
@@ -205,7 +198,6 @@ impl Controller {
                 c.set_status("saved ✓", Level::Success);
             }
         }));
-        window.on_reload_config(self.handler(|c| c.reload_config()));
         window.on_start_service(self.handler(|c| c.service_action(ServiceAction::Start)));
         window.on_stop_service(self.handler(|c| c.service_action(ServiceAction::Stop)));
         window.on_restart_service(self.handler(|c| c.service_action(ServiceAction::Restart)));
@@ -425,6 +417,7 @@ impl Controller {
             changed
         };
         if changed {
+            self.window.set_running(running);
             self.set_view(if running {
                 ServiceView::Services
             } else {
@@ -436,18 +429,18 @@ impl Controller {
     fn set_view(&self, view: ServiceView) {
         let banner = match view {
             ServiceView::Services => String::new(),
-            ServiceView::Readonly => {
-                self.load_config();
-                "Viewing configuration (read-only) — services are still running.".to_owned()
-            }
             ServiceView::Edit => {
                 self.window.set_current_tab(SERVICES_TAB);
-                if self.load_config() {
-                    "Editing configuration — Start All validates, saves, and launches it."
-                        .to_owned()
-                } else {
+                if !self.load_config() {
                     "No services.toml exists yet. Enter a configuration, then Save or Start All \
                      to create it."
+                        .to_owned()
+                } else if self.window.get_running() {
+                    "Editing configuration — services keep running. Apply validates and saves \
+                     it, and restarts everything only if the configuration changed."
+                        .to_owned()
+                } else {
+                    "Editing configuration — Start All validates, saves, and launches it."
                         .to_owned()
                 }
             }
@@ -517,29 +510,36 @@ impl Controller {
 
     // --- lifecycle --------------------------------------------------------------
 
-    fn stop_to_edit(self: &Rc<Self>) {
-        self.job("stopping…".to_owned(), |manager| {
-            manager.stop();
-            Ok("stopped — editing".to_owned())
-        });
-    }
-
-    fn start_all(self: &Rc<Self>) {
+    /// Save the editor text, then start it, or restart with it only if it
+    /// differs from the running configuration.
+    fn apply(self: &Rc<Self>) {
         if !self.persist() {
             return;
         }
-        self.job("starting…".to_owned(), |manager| {
+        if self.window.get_running() {
+            // A failed restart leaves everything stopped, which brings the
+            // editor back.
+            self.set_view(ServiceView::Services);
+        }
+        self.job("applying…".to_owned(), |manager| {
             manager
-                .start()
-                .map(|_| "saved & started ✓".to_owned())
-                .map_err(|err| format!("start failed: {err}"))
+                .apply()
+                .map(|applied| {
+                    match applied {
+                        Applied::Started => "saved & started ✓",
+                        Applied::Restarted => "saved & restarted ✓",
+                        Applied::Unchanged => "saved — no changes, nothing restarted",
+                    }
+                    .to_owned()
+                })
+                .map_err(|err| format!("apply failed: {err}"))
         });
     }
 
     // --- configuration --------------------------------------------------------------
 
-    /// Load the configuration on disk into both config views; returns
-    /// whether a file exists.
+    /// Load the configuration on disk into the editor; returns whether a
+    /// file exists.
     fn load_config(&self) -> bool {
         let Some(result) = self.with_manager(Manager::read_config) else {
             return false;
@@ -556,18 +556,18 @@ impl Controller {
             }
         };
         self.window.set_editor_text(text.as_str().into());
-        self.window.set_config_text(text.as_str().into());
         self.window.set_dirty(false);
         self.state.borrow_mut().loaded_config = text;
         exists
     }
 
-    fn reload_config(&self) {
-        let exists = self.load_config();
-        self.restore_mode_banner();
-        if exists {
-            self.set_status("reloaded from disk", Level::Neutral);
+    /// Discard unsaved edits and go back to the service list.
+    fn cancel_edit(&self) {
+        if self.window.get_dirty() {
+            self.set_status("edits discarded", Level::Neutral);
         }
+        self.load_config();
+        self.set_view(ServiceView::Services);
     }
 
     fn validate(&self) -> bool {
@@ -605,10 +605,6 @@ impl Controller {
             Err(ManagerError::Config(err)) => {
                 self.set_status("invalid", Level::Error);
                 self.set_banner(&err.to_string(), Level::Error);
-                false
-            }
-            Err(ManagerError::StillRunning) => {
-                self.set_status("stop services first", Level::Error);
                 false
             }
             Err(err) => {
@@ -880,7 +876,7 @@ mod tests {
     /// is the only test in the crate that creates Slint components.
     #[cfg(unix)]
     #[test]
-    fn manager_window_edits_starts_controls_and_stops_services() {
+    fn manager_window_edits_starts_controls_and_applies_services() {
         use i_slint_backend_testing::ElementHandle;
         use slint::Model;
 
@@ -935,12 +931,26 @@ mod tests {
             .local_addr()
             .unwrap()
             .port();
-        let config = format!(
-            "http_port = {port}\nbind = [\"127.0.0.1\"]\n\n\
-             [services.app]\ncommand = [\"sh\", \"-c\", \"echo hello from app; exec sleep 30\"]\n\n\
-             [[services.app.routes]]\nid = \"app\"\nhosts = [\"app.localhost\"]\ntarget_port = 1\n\n\
-             [services.external]\n"
-        );
+        let config_on = |port: u16| {
+            format!(
+                "http_port = {port}\nbind = [\"127.0.0.1\"]\n\n\
+                 [services.app]\ncommand = [\"sh\", \"-c\", \"echo hello from app; exec sleep 30\"]\n\n\
+                 [[services.app.routes]]\nid = \"app\"\nhosts = [\"app.localhost\"]\ntarget_port = 1\n\n\
+                 [services.external]\n"
+            )
+        };
+        let config = config_on(port);
+        // The changed configuration must differ, so the port must too.
+        let new_port = loop {
+            let candidate = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            if candidate != port {
+                break candidate;
+            }
+        };
 
         let controller = Controller::new(Arc::clone(&manager), ManagerWindow::new().unwrap(), None);
         controller.bind();
@@ -958,6 +968,14 @@ mod tests {
                         .get_banner()
                         .starts_with("No services.toml exists yet")
                 );
+
+                // Cancel goes back to the service list while stopped, too.
+                type_config(window, "# discarded\n");
+                click(window, "Cancel");
+                assert_eq!(window.get_view(), ServiceView::Services);
+                click(window, "Edit Config");
+                assert_eq!(window.get_view(), ServiceView::Edit);
+                assert_eq!(window.get_editor_text(), "");
 
                 type_config(window, "http_port = \"x\"\nbind = [\"127.0.0.1\"]");
                 assert!(window.get_dirty());
@@ -1026,17 +1044,53 @@ mod tests {
                 })
                 .await;
 
+                // Editing leaves the services running.
+                let pid = window.get_services().row_data(0).unwrap().pid;
+                window.set_current_tab(LOGS_TAB);
                 window.set_current_tab(SERVICES_TAB);
-                click(window, "View Config");
-                assert_eq!(window.get_view(), ServiceView::Readonly);
-                assert_eq!(window.get_config_text(), config.as_str());
-
-                click(window, "Stop All & Edit Config");
-                wait_until("stop", || !window.get_busy()).await;
-                assert_eq!(window.get_status_text(), "stopped — editing");
+                click(window, "Edit Config");
                 assert_eq!(window.get_view(), ServiceView::Edit);
-                assert_eq!(window.get_current_tab(), SERVICES_TAB);
-                assert_eq!(window.get_services().row_data(0).unwrap().status, "stopped");
+                assert_eq!(window.get_editor_text(), config.as_str());
+                assert!(window.get_banner().contains("services keep running"));
+                assert!(window.get_running());
+
+                // Cancel discards unsaved edits and goes back to the list.
+                type_config(window, "# discarded\n");
+                assert!(window.get_dirty());
+                click(window, "Cancel");
+                assert_eq!(window.get_view(), ServiceView::Services);
+                assert_eq!(window.get_status_text(), "edits discarded");
+                assert_eq!(std::fs::read_to_string(&services_file).unwrap(), config);
+                click(window, "Edit Config");
+                assert!(!window.get_dirty());
+                assert_eq!(window.get_editor_text(), config.as_str());
+                type_config(window, &format!("# only a comment\n{config}"));
+
+                // A comment is no change: saved, but nothing restarts.
+                click(window, "Apply");
+                wait_until("apply", || !window.get_busy()).await;
+                assert_eq!(
+                    window.get_status_text(),
+                    "saved — no changes, nothing restarted"
+                );
+                assert_eq!(window.get_view(), ServiceView::Services);
+                assert!(
+                    std::fs::read_to_string(&services_file)
+                        .unwrap()
+                        .starts_with("# only a comment")
+                );
+                assert_eq!(window.get_services().row_data(0).unwrap().pid, pid);
+
+                // A real change restarts everything with it.
+                click(window, "Edit Config");
+                type_config(window, &config_on(new_port));
+                click(window, "Apply");
+                wait_until("apply", || !window.get_busy()).await;
+                assert_eq!(window.get_status_text(), "saved & restarted ✓");
+                assert_eq!(window.get_view(), ServiceView::Services);
+                assert_ne!(window.get_services().row_data(0).unwrap().pid, pid);
+                std::net::TcpStream::connect(("127.0.0.1", new_port)).unwrap();
+                assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
 
                 click(window, "Quit");
             }
@@ -1044,8 +1098,11 @@ mod tests {
         slint::spawn_local(script).unwrap();
         slint::run_event_loop_until_quit().unwrap();
 
-        let manager = lock(&manager);
-        assert!(!manager.is_running());
+        // Quitting only ends the event loop; `Desktop::run` then stops
+        // everything, as here.
+        let mut manager = lock(&manager);
+        assert!(manager.is_running());
+        manager.stop();
         assert!(
             manager
                 .services()

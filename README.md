@@ -98,10 +98,10 @@ the active file (`.log.1` is newest). This bounds each log to about 60 MiB. Rota
 renames completed files rather than truncating a file while it is being written; once
 the retention limit is reached, only the oldest backup is removed.
 
-Edit the configuration in the manager window (**View Config → Stop All & Edit Config**,
-then **Validate**, **Save**, or **Start All**), or edit the file by hand while the
-application is stopped, check it with `local-dev-proxy --check-config`, and start the
-application again.
+Edit the configuration in the manager window (**Edit Config**, then **Validate**,
+**Save**, or **Apply**) while everything keeps running, or edit the file by hand, check
+it with `local-dev-proxy --check-config`, and apply it from the editor (or restart the
+application).
 
 ## Usage
 
@@ -121,11 +121,14 @@ service's combined stdout/stderr goes to `logs/<service>.log`.
 The manager window has three tabs:
 
 - **Services** — each service's status, PID, restart count, and last exit code. Select a
-  row to start, stop, or restart it; double-click a row to open its log. **View Config**
-  shows the running configuration; **Stop All & Edit Config** stops everything and opens
-  the editor, where **Start All** validates, saves, and launches the edited file. If the
-  configuration fails to start, the editor opens with the error. Both views highlight
-  the TOML syntax.
+  row to start, stop, or restart it; double-click a row to open its log. **Edit Config**
+  opens the configuration editor (with TOML syntax highlighting) without stopping
+  anything; **Cancel** discards unsaved edits and goes back to the service list. **Save**
+  only writes the file; **Apply** validates and saves it, then restarts the proxy and
+  every service only if the configuration differs from the running one (comment and
+  formatting changes do not count). While stopped the button is **Start All** instead. If
+  the configuration fails to start, everything stays stopped and the editor opens with
+  the error.
 - **Logs** — the tail of a service's log, with a line count and **Follow** to keep it
   updating.
 - **Routes** — every service's hosts and targets. Click a URL to open it in the browser.
@@ -140,11 +143,11 @@ absent or disabled:
 | Ctrl+Up / Ctrl+Down | Select the previous / next service |
 | Ctrl+Shift+S / Ctrl+Shift+X / Ctrl+Shift+R | Start / Stop / Restart the selected service |
 | Ctrl+L | Open the selected service's log |
-| Ctrl+E | View Config, or back to the service list |
-| Ctrl+Shift+E | Stop All & Edit Config |
+| Ctrl+E | Edit Config |
+| Escape | Cancel: discard unsaved edits and go back to the service list |
 | Ctrl+K / Ctrl+S | Validate / Save the configuration being edited |
-| Ctrl+Enter | Start All (validate, save, and launch the edited configuration) |
-| Ctrl+R | Reload what the current tab shows: the editor from disk, the log, or the routes |
+| Ctrl+Enter | Apply (validate, save, and restart if it changed), or Start All while stopped |
+| Ctrl+R | Reload what the current tab shows: the log or the routes |
 | Ctrl+Q | Quit |
 
 Only one instance runs per profile. Launching it again while it is running brings the
@@ -303,9 +306,9 @@ disagree, the workflow is right and the script is stale.
 
 `ci/unix/e2e.sh` launches the real binary against a throwaway profile, on the headless
 labwc session of the development host, and drives the manager window through its
-keyboard shortcuts: select, stop, start and restart a service, open its log, the routes
-and the read-only configuration, stop everything to edit, save, validate, start again,
-and quit. After each step it checks the proxy's answer over HTTP and the text on screen,
+keyboard shortcuts: select, stop, start and restart a service, open its log and the
+routes, edit the configuration while it keeps running, save, validate, apply it unchanged
+(nothing restarts) and changed (everything restarts), and quit. After each step it checks the proxy's answer over HTTP and the text on screen,
 read from a screenshot with tesseract. `ci/unix/ci.sh` runs it on a Linux host where the
 session is up and skips it elsewhere; `ci/unix/e2e.sh --available` says which. It needs
 the labwc session's `DISPLAY` in the systemd user environment (or

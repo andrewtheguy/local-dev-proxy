@@ -1,6 +1,6 @@
 import { Button, CheckBox, ComboBox, ListView, Palette, ScrollView, SpinBox, TabWidget, TextEdit } from "std-widgets.slint";
 
-export enum ServiceView { services, readonly, edit }
+export enum ServiceView { services, edit }
 
 export enum Level { neutral, success, error }
 
@@ -456,6 +456,8 @@ export component ManagerWindow inherits Window {
     in property <string> mono-font;
     /// A lifecycle or service action is running in the background.
     in property <bool> busy;
+    /// The proxy and services are running.
+    in property <bool> running;
     in-out property <int> current-tab;
 
     in property <ServiceView> view;
@@ -465,7 +467,6 @@ export component ManagerWindow inherits Window {
     in property <Level> status-level;
     in property <[ServiceRow]> services;
     in property <int> selected-service: -1;
-    in property <string> config-text;
     in-out property <string> editor-text;
     in property <bool> dirty;
 
@@ -479,12 +480,11 @@ export component ManagerWindow inherits Window {
     in property <string> routes-banner;
 
     callback quit();
-    callback toggle-view-config();
-    callback stop-to-edit();
-    callback start-all();
+    callback edit-config();
+    callback cancel-edit();
+    callback apply();
     callback validate();
     callback save();
-    callback reload-config();
     callback editor-edited(string);
     callback service-selected(int);
     callback start-service();
@@ -518,7 +518,6 @@ export component ManagerWindow inherits Window {
     private property <bool> on-services-tab: current-tab == 0;
     private property <bool> in-service-list: on-services-tab && view == ServiceView.services;
     private property <bool> editing: on-services-tab && view == ServiceView.edit;
-    private property <bool> viewing-config: on-services-tab && view == ServiceView.readonly;
 
     function move-selection(delta: int) {
         if (in-service-list && services.length > 0) {
@@ -528,11 +527,9 @@ export component ManagerWindow inherits Window {
 
     // Reload whatever the current tab shows.
     function refresh-current-tab() {
-        if (editing && !busy) {
-            root.reload-config();
-        } else if (current-tab == 1 && view != ServiceView.edit) {
+        if (current-tab == 1 && running) {
             root.refresh-logs();
-        } else if (current-tab == 2 && view != ServiceView.edit) {
+        } else if (current-tab == 2 && running) {
             root.reload-routes();
         }
     }
@@ -594,17 +591,17 @@ export component ManagerWindow inherits Window {
         KeyBinding {
             keys: @keys(Control + "e");
             activated => {
-                if ((root.in-service-list || root.viewing-config) && !root.busy) {
-                    root.toggle-view-config();
+                if (root.in-service-list && !root.busy) {
+                    root.edit-config();
                 }
             }
         }
 
         KeyBinding {
-            keys: @keys(Control + Shift + "e");
+            keys: @keys(Escape);
             activated => {
-                if (root.viewing-config && !root.busy) {
-                    root.stop-to-edit();
+                if (root.editing && !root.busy) {
+                    root.cancel-edit();
                 }
             }
         }
@@ -613,7 +610,7 @@ export component ManagerWindow inherits Window {
             keys: @keys(Control + Return);
             activated => {
                 if (root.editing && !root.busy) {
-                    root.start-all();
+                    root.apply();
                 }
             }
         }
@@ -731,26 +728,19 @@ export component ManagerWindow inherits Window {
 
                         HorizontalLayout {
                             spacing: 8px;
-                            if root.view != ServiceView.edit: Button {
-                                text: root.view == ServiceView.readonly ? "Back to Services" : "View Config";
+                            if root.view == ServiceView.services: Button {
+                                text: "Edit Config";
                                 enabled: !root.busy;
                                 clicked => {
-                                    root.toggle-view-config();
-                                }
-                            }
-                            if root.view == ServiceView.readonly: Button {
-                                text: "Stop All & Edit Config";
-                                enabled: !root.busy;
-                                clicked => {
-                                    root.stop-to-edit();
+                                    root.edit-config();
                                 }
                             }
                             if root.view == ServiceView.edit: Button {
-                                text: "Start All";
+                                text: root.running ? "Apply" : "Start All";
                                 primary: true;
                                 enabled: !root.busy;
                                 clicked => {
-                                    root.start-all();
+                                    root.apply();
                                 }
                             }
                             Rectangle { }
@@ -820,14 +810,6 @@ export component ManagerWindow inherits Window {
                             }
                         }
 
-                        if root.view == ServiceView.readonly: TomlEdit {
-                            accessible-label: "Configuration";
-                            vertical-stretch: 1;
-                            read-only: true;
-                            font-family: root.mono-font;
-                            text: root.config-text;
-                        }
-
                         if root.view == ServiceView.edit: VerticalLayout {
                             spacing: 8px;
                             TomlEdit {
@@ -860,10 +842,10 @@ export component ManagerWindow inherits Window {
                                 }
 
                                 Button {
-                                    text: "Reload from disk";
+                                    text: "Cancel";
                                     enabled: !root.busy;
                                     clicked => {
-                                        root.reload-config();
+                                        root.cancel-edit();
                                     }
                                 }
 
@@ -881,14 +863,14 @@ export component ManagerWindow inherits Window {
 
                 Tab {
                     title: "Logs";
-                    if root.view == ServiceView.edit: Text {
-                        text: "Unavailable while editing the configuration.";
+                    if !root.running: Text {
+                        text: "Unavailable while services are stopped.";
                         color: Colors.muted;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
 
-                    if root.view != ServiceView.edit: VerticalLayout {
+                    if root.running: VerticalLayout {
                         padding: 12px;
                         spacing: 8px;
                         HorizontalLayout {
@@ -954,14 +936,14 @@ export component ManagerWindow inherits Window {
 
                 Tab {
                     title: "Routes";
-                    if root.view == ServiceView.edit: Text {
-                        text: "Unavailable while editing the configuration.";
+                    if !root.running: Text {
+                        text: "Unavailable while services are stopped.";
                         color: Colors.muted;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
 
-                    if root.view != ServiceView.edit: VerticalLayout {
+                    if root.running: VerticalLayout {
                         padding: 12px;
                         spacing: 8px;
                         Text {

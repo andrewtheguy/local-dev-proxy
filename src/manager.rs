@@ -24,8 +24,6 @@ pub enum ManagerError {
     Service(#[from] ServiceError),
     #[error("services are not running")]
     NotRunning,
-    #[error("stop services before changing the configuration")]
-    StillRunning,
     #[error("could not write {path}: {source}")]
     Write {
         path: String,
@@ -41,6 +39,20 @@ pub struct Manager {
     /// Kept after a stop so the last known service states stay visible.
     services: Option<ServiceManager>,
     proxy: Option<ProxyServer>,
+    /// The configuration the proxy and services were started from; `Some`
+    /// exactly while running.
+    running: Option<Manifest>,
+}
+
+/// What [`Manager::apply`] did with the configuration on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applied {
+    /// Nothing was running, so it was started.
+    Started,
+    /// It differed from the running configuration, so everything restarted.
+    Restarted,
+    /// It matches the running configuration; nothing was touched.
+    Unchanged,
 }
 
 impl Manager {
@@ -55,6 +67,7 @@ impl Manager {
             log_limits: LogLimits::default(),
             services: None,
             proxy: None,
+            running: None,
         })
     }
 
@@ -107,6 +120,7 @@ impl Manager {
         )) {
             Ok(proxy) => {
                 self.proxy = Some(proxy);
+                self.running = Some(manifest.clone());
                 Ok(manifest)
             }
             Err(err) => {
@@ -116,8 +130,24 @@ impl Manager {
         }
     }
 
+    /// Start the configuration on disk, restarting everything only if it
+    /// differs from the running one. Comment and formatting changes do not
+    /// count as differences.
+    pub fn apply(&mut self) -> Result<Applied, ManagerError> {
+        let Some(running) = &self.running else {
+            self.start()?;
+            return Ok(Applied::Started);
+        };
+        if *running == load_manifest(&self.paths.services_file())? {
+            return Ok(Applied::Unchanged);
+        }
+        self.start()?;
+        Ok(Applied::Restarted)
+    }
+
     /// Stop the proxy and every managed service.
     pub fn stop(&mut self) {
+        self.running = None;
         if let Some(proxy) = self.proxy.take() {
             self.runtime.block_on(proxy.shutdown());
         }
@@ -167,9 +197,13 @@ impl Manager {
         Ok(tail_file(&services.log_path(name)?, lines))
     }
 
-    /// Route listing for the configuration on disk.
+    /// Route listing for the running configuration, or the one on disk
+    /// while stopped.
     pub fn routes(&self) -> Result<Vec<RouteGroup>, ConfigError> {
-        Ok(route_listing(&load_manifest(&self.paths.services_file())?))
+        match &self.running {
+            Some(manifest) => Ok(route_listing(manifest)),
+            None => Ok(route_listing(&load_manifest(&self.paths.services_file())?)),
+        }
     }
 
     /// The configuration text on disk, or `None` if none exists yet.
@@ -189,12 +223,9 @@ impl Manager {
         Ok(manifest)
     }
 
-    /// Validate and atomically replace the configuration. Only allowed while
-    /// stopped, so the running state always matches the file it came from.
+    /// Validate and atomically replace the configuration. The running state
+    /// is untouched until [`Manager::apply`].
     pub fn save_config(&self, text: &str) -> Result<(), ManagerError> {
-        if self.is_running() {
-            return Err(ManagerError::StillRunning);
-        }
         self.validate_config(text)?;
         write_atomically(&self.paths.services_file(), text)
     }
@@ -247,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn config_editing_is_only_allowed_while_stopped() {
+    fn config_edits_while_running_apply_only_when_they_change_something() {
         let (_dir, mut manager) = manager();
         assert_eq!(manager.read_config().unwrap(), None);
         assert!(matches!(
@@ -256,20 +287,36 @@ mod tests {
         ));
         assert!(!manager.has_config());
 
-        let text = config(free_port());
+        let first_port = free_port();
+        let text = config(first_port);
         manager.save_config(&text).unwrap();
         assert_eq!(
             manager.read_config().unwrap().as_deref(),
             Some(text.as_str())
         );
+        assert_eq!(manager.apply().unwrap(), Applied::Started);
+        let pid = manager.services()[0].pid;
 
-        manager.start().unwrap();
-        assert!(matches!(
-            manager.save_config(&text),
-            Err(ManagerError::StillRunning)
-        ));
-        manager.stop();
-        manager.save_config(&text).unwrap();
+        // Saving while running leaves the running services alone.
+        let commented = format!("# a comment\n{text}");
+        manager.save_config(&commented).unwrap();
+        assert!(manager.is_running());
+        assert_eq!(manager.apply().unwrap(), Applied::Unchanged);
+        assert_eq!(manager.services()[0].pid, pid);
+
+        // The changed configuration must differ, so the port must too.
+        let port = loop {
+            let candidate = free_port();
+            if candidate != first_port {
+                break candidate;
+            }
+        };
+        manager.save_config(&config(port)).unwrap();
+        assert_eq!(manager.services()[0].pid, pid);
+        assert_eq!(manager.apply().unwrap(), Applied::Restarted);
+        assert!(manager.is_running());
+        assert_ne!(manager.services()[0].pid, pid);
+        std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     }
 
     #[test]
