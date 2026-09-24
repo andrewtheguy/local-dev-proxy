@@ -940,11 +940,17 @@ mod tests {
             )
         };
         let config = config_on(port);
-        let new_port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        // The changed configuration must differ, so the port must too.
+        let new_port = loop {
+            let candidate = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            if candidate != port {
+                break candidate;
+            }
+        };
 
         let controller = Controller::new(Arc::clone(&manager), ManagerWindow::new().unwrap(), None);
         controller.bind();

@@ -287,7 +287,8 @@ mod tests {
         ));
         assert!(!manager.has_config());
 
-        let text = config(free_port());
+        let first_port = free_port();
+        let text = config(first_port);
         manager.save_config(&text).unwrap();
         assert_eq!(
             manager.read_config().unwrap().as_deref(),
@@ -303,7 +304,13 @@ mod tests {
         assert_eq!(manager.apply().unwrap(), Applied::Unchanged);
         assert_eq!(manager.services()[0].pid, pid);
 
-        let port = free_port();
+        // The changed configuration must differ, so the port must too.
+        let port = loop {
+            let candidate = free_port();
+            if candidate != first_port {
+                break candidate;
+            }
+        };
         manager.save_config(&config(port)).unwrap();
         assert_eq!(manager.services()[0].pid, pid);
         assert_eq!(manager.apply().unwrap(), Applied::Restarted);
