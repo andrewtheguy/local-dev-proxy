@@ -480,11 +480,11 @@ export component ManagerWindow inherits Window {
     in property <string> routes-banner;
 
     callback quit();
-    callback toggle-edit();
+    callback edit-config();
+    callback cancel-edit();
     callback apply();
     callback validate();
     callback save();
-    callback reload-config();
     callback editor-edited(string);
     callback service-selected(int);
     callback start-service();
@@ -527,9 +527,7 @@ export component ManagerWindow inherits Window {
 
     // Reload whatever the current tab shows.
     function refresh-current-tab() {
-        if (editing && !busy) {
-            root.reload-config();
-        } else if (current-tab == 1 && running) {
+        if (current-tab == 1 && running) {
             root.refresh-logs();
         } else if (current-tab == 2 && running) {
             root.reload-routes();
@@ -593,8 +591,17 @@ export component ManagerWindow inherits Window {
         KeyBinding {
             keys: @keys(Control + "e");
             activated => {
-                if ((root.in-service-list || (root.editing && root.running)) && !root.busy) {
-                    root.toggle-edit();
+                if (root.in-service-list && !root.busy) {
+                    root.edit-config();
+                }
+            }
+        }
+
+        KeyBinding {
+            keys: @keys(Escape);
+            activated => {
+                if (root.editing && root.running && !root.busy) {
+                    root.cancel-edit();
                 }
             }
         }
@@ -721,11 +728,11 @@ export component ManagerWindow inherits Window {
 
                         HorizontalLayout {
                             spacing: 8px;
-                            if root.view == ServiceView.services || root.running: Button {
-                                text: root.view == ServiceView.edit ? "Back to Services" : "Edit Config";
+                            if root.view == ServiceView.services: Button {
+                                text: "Edit Config";
                                 enabled: !root.busy;
                                 clicked => {
-                                    root.toggle-edit();
+                                    root.edit-config();
                                 }
                             }
                             if root.view == ServiceView.edit: Button {
@@ -834,11 +841,12 @@ export component ManagerWindow inherits Window {
                                     }
                                 }
 
-                                Button {
-                                    text: "Reload from disk";
+                                // Nothing to go back to while stopped.
+                                if root.running: Button {
+                                    text: "Cancel";
                                     enabled: !root.busy;
                                     clicked => {
-                                        root.reload-config();
+                                        root.cancel-edit();
                                     }
                                 }
 

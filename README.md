@@ -123,7 +123,8 @@ The manager window has three tabs:
 - **Services** — each service's status, PID, restart count, and last exit code. Select a
   row to start, stop, or restart it; double-click a row to open its log. **Edit Config**
   opens the configuration editor (with TOML syntax highlighting) while the proxy and
-  services keep running. **Save** only writes the file; **Apply** validates and saves it,
+  services keep running; **Cancel** discards unsaved edits and goes back to the service
+  list. **Save** only writes the file; **Apply** validates and saves it,
   then restarts the proxy and every service only if the configuration differs from the
   running one (comment and formatting changes do not count). While stopped the button is
   **Start All** instead. If the configuration fails to start, everything stays stopped
@@ -142,10 +143,11 @@ absent or disabled:
 | Ctrl+Up / Ctrl+Down | Select the previous / next service |
 | Ctrl+Shift+S / Ctrl+Shift+X / Ctrl+Shift+R | Start / Stop / Restart the selected service |
 | Ctrl+L | Open the selected service's log |
-| Ctrl+E | Edit Config, or back to the service list |
+| Ctrl+E | Edit Config |
+| Escape | Cancel editing: discard unsaved edits and go back to the service list |
 | Ctrl+K / Ctrl+S | Validate / Save the configuration being edited |
 | Ctrl+Enter | Apply (validate, save, and restart if it changed), or Start All while stopped |
-| Ctrl+R | Reload what the current tab shows: the editor from disk, the log, or the routes |
+| Ctrl+R | Reload what the current tab shows: the log or the routes |
 | Ctrl+Q | Quit |
 
 Only one instance runs per profile. Launching it again while it is running brings the

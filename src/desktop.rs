@@ -187,14 +187,8 @@ impl Controller {
     fn bind(self: &Rc<Self>) {
         let window = &self.window;
         window.on_quit(self.handler(|c| c.quit()));
-        window.on_toggle_edit(self.handler(|c| {
-            let view = c.state.borrow().view;
-            if view == ServiceView::Services {
-                c.set_view(ServiceView::Edit);
-            } else if c.window.get_running() {
-                c.set_view(ServiceView::Services);
-            }
-        }));
+        window.on_edit_config(self.handler(|c| c.set_view(ServiceView::Edit)));
+        window.on_cancel_edit(self.handler(|c| c.cancel_edit()));
         window.on_apply(self.handler(|c| c.apply()));
         window.on_validate(self.handler(|c| {
             c.validate();
@@ -204,7 +198,6 @@ impl Controller {
                 c.set_status("saved ✓", Level::Success);
             }
         }));
-        window.on_reload_config(self.handler(|c| c.reload_config()));
         window.on_start_service(self.handler(|c| c.service_action(ServiceAction::Start)));
         window.on_stop_service(self.handler(|c| c.service_action(ServiceAction::Stop)));
         window.on_restart_service(self.handler(|c| c.service_action(ServiceAction::Restart)));
@@ -438,13 +431,7 @@ impl Controller {
             ServiceView::Services => String::new(),
             ServiceView::Edit => {
                 self.window.set_current_tab(SERVICES_TAB);
-                // Unsaved edits survive a trip back to the service list.
-                let exists = if self.window.get_dirty() {
-                    self.with_manager(Manager::has_config).unwrap_or(true)
-                } else {
-                    self.load_config()
-                };
-                if !exists {
+                if !self.load_config() {
                     "No services.toml exists yet. Enter a configuration, then Save or Start All \
                      to create it."
                         .to_owned()
@@ -574,12 +561,13 @@ impl Controller {
         exists
     }
 
-    fn reload_config(&self) {
-        let exists = self.load_config();
-        self.restore_mode_banner();
-        if exists {
-            self.set_status("reloaded from disk", Level::Neutral);
+    /// Discard unsaved edits and go back to the service list.
+    fn cancel_edit(&self) {
+        if self.window.get_dirty() {
+            self.set_status("edits discarded", Level::Neutral);
         }
+        self.load_config();
+        self.set_view(ServiceView::Services);
     }
 
     fn validate(&self) -> bool {
@@ -1052,13 +1040,17 @@ mod tests {
                 assert!(window.get_banner().contains("services keep running"));
                 assert!(window.get_running());
 
-                // Unsaved edits survive going back to the list.
-                type_config(window, &format!("# only a comment\n{config}"));
-                click(window, "Back to Services");
-                assert_eq!(window.get_view(), ServiceView::Services);
-                click(window, "Edit Config");
+                // Cancel discards unsaved edits and goes back to the list.
+                type_config(window, "# discarded\n");
                 assert!(window.get_dirty());
-                assert!(window.get_editor_text().starts_with("# only a comment"));
+                click(window, "Cancel");
+                assert_eq!(window.get_view(), ServiceView::Services);
+                assert_eq!(window.get_status_text(), "edits discarded");
+                assert_eq!(std::fs::read_to_string(&services_file).unwrap(), config);
+                click(window, "Edit Config");
+                assert!(!window.get_dirty());
+                assert_eq!(window.get_editor_text(), config.as_str());
+                type_config(window, &format!("# only a comment\n{config}"));
 
                 // A comment is no change: saved, but nothing restarts.
                 click(window, "Apply");
