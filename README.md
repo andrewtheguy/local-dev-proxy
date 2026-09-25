@@ -164,8 +164,9 @@ similar locations resolve even when the binary is started outside a terminal.
   it from the tray icon's **Open Manager** (or by launching the application again). On
   macOS the Dock icon is shown only while the window is open. Without a tray icon,
   closing the window quits.
-- **Quit** (the window's button, the tray menu, or Ctrl/Cmd-Q) → stops the proxy, stops
-  every managed service together with its child processes, and exits.
+- **Quit** (the window's button, the tray menu, or Ctrl/Cmd-Q; on macOS also the app
+  menu, the Dock, and logging out) → stops the proxy, stops every managed service
+  together with its child processes, and exits.
 - **SIGTERM, SIGINT (Ctrl-C), or SIGHUP** (Ctrl-C, Ctrl-Break, or closing the console
   window on Windows) → the same as Quit.
 - **A managed service exits on its own** → it is reported as `crashed` with its exit

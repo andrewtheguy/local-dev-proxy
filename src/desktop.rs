@@ -53,10 +53,16 @@ pub struct Desktop;
 impl Frontend for Desktop {
     fn run(self: Box<Self>, manager: Manager, events: Receiver<AppEvent>) -> ExitCode {
         let manager = Arc::new(Mutex::new(manager));
+        // AppKit's own quit paths (the app menu's Quit and its Cmd-Q, the
+        // Dock's Quit, logging out) exit the process from inside the event
+        // loop, so this never regains control after them.
+        let _terminate = app_exit::on_terminate({
+            let manager = Arc::clone(&manager);
+            move || shut_down(&manager)
+        });
         let result = run_event_loop(Arc::clone(&manager), events);
         // However the event loop ended, the window is gone; stop everything.
-        tracing::info!("Shutting down");
-        lock(&manager).stop();
+        shut_down(&manager);
         match result {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
@@ -113,6 +119,11 @@ fn forward_app_events(
     })
     .map_err(|err| PlatformError::Other(err.to_string()))?;
     Ok(())
+}
+
+fn shut_down(manager: &Mutex<Manager>) {
+    tracing::info!("Shutting down");
+    lock(manager).stop();
 }
 
 fn lock(manager: &Mutex<Manager>) -> MutexGuard<'_, Manager> {
@@ -768,6 +779,56 @@ mod dock {
 
     #[cfg(not(target_os = "macos"))]
     pub fn set_icon_visible(_visible: bool) {}
+}
+
+mod app_exit {
+    /// Keeps the terminate handler registered while alive.
+    pub struct Registration {
+        #[cfg(target_os = "macos")]
+        token: objc2::rc::Retained<
+            objc2::runtime::ProtocolObject<dyn objc2::runtime::NSObjectProtocol>,
+        >,
+    }
+
+    /// Run `handler` when AppKit is about to exit the process (`terminate:`),
+    /// which it does without returning from the event loop.
+    #[cfg(target_os = "macos")]
+    pub fn on_terminate(handler: impl Fn() + Send + 'static) -> Registration {
+        use std::ptr::NonNull;
+
+        use block2::RcBlock;
+        use objc2_app_kit::NSApplicationWillTerminateNotification;
+        use objc2_foundation::{NSNotification, NSNotificationCenter};
+
+        let block = RcBlock::new(move |_: NonNull<NSNotification>| handler());
+        let center = NSNotificationCenter::defaultCenter();
+        // SAFETY: the name is an AppKit constant; with no queue the block
+        // runs synchronously on the posting (main) thread, and it is `Send`.
+        let token = unsafe {
+            center.addObserverForName_object_queue_usingBlock(
+                Some(NSApplicationWillTerminateNotification),
+                None,
+                None,
+                &block,
+            )
+        };
+        Registration { token }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn on_terminate(_handler: impl Fn() + Send + 'static) -> Registration {
+        Registration {}
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for Registration {
+        fn drop(&mut self) {
+            use objc2_foundation::NSNotificationCenter;
+
+            // SAFETY: `token` came from this center's `addObserverForName`.
+            unsafe { NSNotificationCenter::defaultCenter().removeObserver(self.token.as_ref()) };
+        }
+    }
 }
 
 fn install_toml_syntax(window: &ManagerWindow) {
