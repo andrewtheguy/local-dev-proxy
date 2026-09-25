@@ -142,6 +142,30 @@ component TintedButton inherits Rectangle {
             root.clicked();
         }
     }
+
+    forward-focus: focus;
+    focus := FocusScope {
+        enabled: root.enabled;
+        // Unmodified only, so window shortcuts such as Ctrl+Return bubble up.
+        key-pressed(event) => {
+            if (!event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt && (event.text == Key.Return || event.text == Key.Space)) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    // Focus ring, outside the fill so it shows against any tint.
+    if focus.has-focus: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: root.width + 6px;
+        height: root.height + 6px;
+        border-radius: root.border-radius + 3px;
+        border-width: 2px;
+        border-color: Palette.accent-background;
+    }
 }
 
 component Banner inherits Rectangle {
