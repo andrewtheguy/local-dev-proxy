@@ -1,6 +1,6 @@
 [package]
 name = "local-dev-proxy"
-version = "0.0.18"
+version = "0.0.19"
 edition = "2024"
 description = "Local development process orchestration with a built-in reverse proxy"
 authors = ["Andrew Chen <hello@andrewtheguy.com>"]
