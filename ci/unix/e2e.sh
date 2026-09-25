@@ -218,6 +218,9 @@ expect_screen editing-again 'services keep running'
 key ctrl+k
 # Word-bounded: the banner says "validates".
 expect_screen valid '\bvalid\b'
+# Apply from a focused control (Tab lands on Validate): leaving the editor
+# removes it, and the shortcuts must keep working afterwards.
+for _ in 1 2 3 4 5; do key Tab; done
 key ctrl+Return
 expect_screen unchanged 'no changes'
 expect_http 'still up after an unchanged apply' web.localhost 200

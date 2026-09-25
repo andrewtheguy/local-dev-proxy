@@ -565,6 +565,12 @@ export component ManagerWindow inherits Window {
         root.tab-changed(root.current-tab);
     }
 
+    // Switching views removes the focused control with the old view, and
+    // with nothing focused no shortcut fires; hand focus back to them.
+    changed view => {
+        shortcuts.focus();
+    }
+
     private property <bool> has-selection: selected-service >= 0 && selected-service < services.length;
     private property <ServiceRow> selection: services[selected-service];
     private property <bool> can-control: has-selection && selection.controllable && !busy;
