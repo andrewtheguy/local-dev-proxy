@@ -2710,8 +2710,9 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 
 [[package]]
 name = "local-dev-proxy"
-version = "0.0.17"
+version = "0.0.18"
 dependencies = [
+ "block2 0.6.2",
  "bytes",
  "chrono",
  "dirs",
@@ -2725,6 +2726,7 @@ dependencies = [
  "libc",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "sha2",
  "slint",
  "slint-build",
