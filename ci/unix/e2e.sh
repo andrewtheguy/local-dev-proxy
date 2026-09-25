@@ -8,7 +8,7 @@
 # The scenario launches the manager against a throwaway profile whose one
 # service is a busybox httpd, then walks every keyboard shortcut: select the
 # service, stop, start and restart it, open its log and the routes, edit the
-# configuration while it keeps running, cancel, edit again, save, validate,
+# configuration while it keeps running, cancel, edit again, validate,
 # apply it unchanged (nothing restarts), apply a change (everything
 # restarts), and quit. After each step it checks what a user would check: the
 # proxy's answer over HTTP, and the text on screen (a screenshot of the
@@ -215,8 +215,6 @@ key Escape
 expect_screen cancelled 'Edit Config'
 key ctrl+e
 expect_screen editing-again 'services keep running'
-key ctrl+s
-expect_screen saved '\bsaved\b'
 key ctrl+k
 # Word-bounded: the banner says "validates".
 expect_screen valid '\bvalid\b'

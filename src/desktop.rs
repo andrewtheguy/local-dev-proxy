@@ -204,11 +204,6 @@ impl Controller {
         window.on_validate(self.handler(|c| {
             c.validate();
         }));
-        window.on_save(self.handler(|c| {
-            if c.persist() {
-                c.set_status("saved ✓", Level::Success);
-            }
-        }));
         window.on_start_service(self.handler(|c| c.service_action(ServiceAction::Start)));
         window.on_stop_service(self.handler(|c| c.service_action(ServiceAction::Stop)));
         window.on_restart_service(self.handler(|c| c.service_action(ServiceAction::Restart)));
@@ -443,9 +438,9 @@ impl Controller {
             ServiceView::Edit => {
                 self.window.set_current_tab(SERVICES_TAB);
                 if !self.load_config() {
-                    "No services.toml exists yet. Enter a configuration, then Save or Start All \
-                     to create it."
-                        .to_owned()
+                    "No services.toml exists yet. Enter a configuration, then Start All to create \
+                     it."
+                    .to_owned()
                 } else if self.window.get_running() {
                     "Editing configuration — services keep running. Apply validates and saves \
                      it, and restarts everything only if the configuration changed."
