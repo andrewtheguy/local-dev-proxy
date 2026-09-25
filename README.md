@@ -75,7 +75,7 @@ directory:
 | Linux | `$XDG_CONFIG_HOME/andrewtheguy/local-dev-proxy/` (or `~/.config/...`) |
 
 The application does not seed `services.toml`. Without one, the manager window opens in
-the configuration editor; save a configuration there (or run Start All) to create the
+the configuration editor; enter a configuration there and run Start All to create the
 file. `--headless` instead exits with an error that names the expected path.
 `local-dev-proxy --sample-config` prints a reference configuration; it is never written
 into the profile and is not intended to run unchanged.
@@ -98,8 +98,8 @@ the active file (`.log.1` is newest). This bounds each log to about 60 MiB. Rota
 renames completed files rather than truncating a file while it is being written; once
 the retention limit is reached, only the oldest backup is removed.
 
-Edit the configuration in the manager window (**Edit Config**, then **Validate**,
-**Save**, or **Apply**) while everything keeps running, or edit the file by hand, check
+Edit the configuration in the manager window (**Edit Config**, then **Validate** or
+**Apply**) while everything keeps running, or edit the file by hand, check
 it with `local-dev-proxy --check-config`, and apply it from the editor (or restart the
 application).
 
@@ -123,12 +123,12 @@ The manager window has three tabs:
 - **Services** — each service's status, PID, restart count, and last exit code. Select a
   row to start, stop, or restart it; double-click a row to open its log. **Edit Config**
   opens the configuration editor (with TOML syntax highlighting) without stopping
-  anything; **Cancel** discards unsaved edits and goes back to the service list. **Save**
-  only writes the file; **Apply** validates and saves it, then restarts the proxy and
-  every service only if the configuration differs from the running one (comment and
-  formatting changes do not count). While stopped the button is **Start All** instead. If
-  the configuration fails to start, everything stays stopped and the editor opens with
-  the error.
+  anything; **Cancel** discards unsaved edits and goes back to the service list.
+  **Validate** only checks the edits; nothing is written until **Apply**, which
+  validates and saves them, then restarts the proxy and every service only if the
+  configuration differs from the running one (comment and formatting changes do not
+  count). While stopped the button is **Start All** instead. If the configuration fails
+  to start, everything stays stopped and the editor opens with the error.
 - **Logs** — the tail of a service's log, with a line count and **Follow** to keep it
   updating.
 - **Routes** — every service's hosts and targets. Click a URL to open it in the browser.
@@ -145,7 +145,7 @@ absent or disabled:
 | Ctrl+L | Open the selected service's log |
 | Ctrl+E | Edit Config |
 | Escape | Cancel: discard unsaved edits and go back to the service list |
-| Ctrl+K / Ctrl+S | Validate / Save the configuration being edited |
+| Ctrl+K | Validate the configuration being edited |
 | Ctrl+Enter | Apply (validate, save, and restart if it changed), or Start All while stopped |
 | Ctrl+R | Reload what the current tab shows: the log or the routes |
 | Ctrl+Q | Quit |
@@ -308,7 +308,7 @@ disagree, the workflow is right and the script is stale.
 `ci/unix/e2e.sh` launches the real binary against a throwaway profile, on the headless
 labwc session of the development host, and drives the manager window through its
 keyboard shortcuts: select, stop, start and restart a service, open its log and the
-routes, edit the configuration while it keeps running, save, validate, apply it unchanged
+routes, edit the configuration while it keeps running, validate, apply it unchanged
 (nothing restarts) and changed (everything restarts), and quit. After each step it checks the proxy's answer over HTTP and the text on screen,
 read from a screenshot with tesseract. `ci/unix/ci.sh` runs it on a Linux host where the
 session is up and skips it elsewhere; `ci/unix/e2e.sh --available` says which. It needs

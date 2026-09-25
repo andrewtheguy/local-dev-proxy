@@ -54,6 +54,8 @@ global Colors {
     out property <color> muted: Palette.color-scheme == ColorScheme.dark ? #85888e : #98a2b3;
     out property <color> link: Palette.color-scheme == ColorScheme.dark ? #84adff : #175cd3;
     out property <color> warning: Palette.color-scheme == ColorScheme.dark ? #fdb022 : #b54708;
+    out property <color> check: Palette.color-scheme == ColorScheme.dark ? #2ed3b7 : #107569;
+    out property <color> on-check: Palette.color-scheme == ColorScheme.dark ? #0c111d : #ffffff;
 
     public pure function level(level: Level) -> brush {
         if level == Level.success {
@@ -99,6 +101,70 @@ global Colors {
             return dark ? #f670c7 : #c11574;
         }
         Palette.foreground
+    }
+}
+
+/// A filled button in its own color, set apart from the accent-colored
+/// primary button.
+component TintedButton inherits Rectangle {
+    in property <string> text;
+    in property <bool> enabled: true;
+    in property <color> tint;
+    in property <color> on-tint;
+    callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+
+    min-height: 32px;
+    min-width: label.preferred-width + 24px;
+    horizontal-stretch: 0;
+    border-radius: 4px;
+    background: !root.enabled ? root.tint.transparentize(60%) : touch.pressed ? root.tint.darker(20%) : touch.has-hover ? root.tint.darker(10%) : root.tint;
+
+    label := Text {
+        text: root.text;
+        color: root.on-tint;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    forward-focus: focus;
+    focus := FocusScope {
+        enabled: root.enabled;
+        // Unmodified only, so window shortcuts such as Ctrl+Return bubble up.
+        key-pressed(event) => {
+            if (!event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt && (event.text == Key.Return || event.text == Key.Space)) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    // Focus ring, outside the fill so it shows against any tint.
+    if focus.has-focus: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: root.width + 6px;
+        height: root.height + 6px;
+        border-radius: root.border-radius + 3px;
+        border-width: 2px;
+        border-color: Palette.accent-background;
     }
 }
 
@@ -484,7 +550,6 @@ export component ManagerWindow inherits Window {
     callback cancel-edit();
     callback apply();
     callback validate();
-    callback save();
     callback editor-edited(string);
     callback service-selected(int);
     callback start-service();
@@ -498,6 +563,12 @@ export component ManagerWindow inherits Window {
 
     changed current-tab => {
         root.tab-changed(root.current-tab);
+    }
+
+    // Switching views removes the focused control with the old view, and
+    // with nothing focused no shortcut fires; hand focus back to them.
+    changed view => {
+        shortcuts.focus();
     }
 
     private property <bool> has-selection: selected-service >= 0 && selected-service < services.length;
@@ -620,15 +691,6 @@ export component ManagerWindow inherits Window {
             activated => {
                 if (root.editing && !root.busy) {
                     root.validate();
-                }
-            }
-        }
-
-        KeyBinding {
-            keys: @keys(Control + "s");
-            activated => {
-                if (root.editing && !root.busy) {
-                    root.save();
                 }
             }
         }
@@ -825,19 +887,13 @@ export component ManagerWindow inherits Window {
 
                             HorizontalLayout {
                                 spacing: 8px;
-                                Button {
+                                TintedButton {
                                     text: "Validate";
+                                    tint: Colors.check;
+                                    on-tint: Colors.on-check;
                                     enabled: !root.busy;
                                     clicked => {
                                         root.validate();
-                                    }
-                                }
-
-                                Button {
-                                    text: "Save";
-                                    enabled: !root.busy;
-                                    clicked => {
-                                        root.save();
                                     }
                                 }
 
