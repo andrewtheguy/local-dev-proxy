@@ -766,9 +766,14 @@ mod dock {
             NSApplicationActivationPolicy::Accessory
         });
         if visible {
-            // `activate` needs macOS 14; this covers older releases too.
-            #[allow(deprecated)]
-            app.activateIgnoringOtherApps(true);
+            // `activate` only requests activation, which macOS refuses while
+            // another app is in use; raise the window so it is seen regardless.
+            app.activate();
+            for window in app.windows().iter() {
+                if window.canBecomeMainWindow() {
+                    window.orderFrontRegardless();
+                }
+            }
         }
     }
 

@@ -140,6 +140,9 @@ jobs:
           shared-key: release-macos-arm64
 
       - name: Build release
+        # Keep in step with LSMinimumSystemVersion in packaging/macos/Info.plist.
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
         run: cargo build --locked --release
 
       - name: Package app (.dmg, unsigned)
