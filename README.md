@@ -300,8 +300,9 @@ pwsh -File ci/windows/remote.ps1     # the Windows CI VM
 ```
 
 Both remote drivers also take `shell`, `doctor` (report the machine's toolchain, change
-nothing) and `clean` (drop its cargo target cache). When a `ci.*` script and the workflow
-disagree, the workflow is right and the script is stale.
+nothing) and `clean` (drop its cargo build cache, which for Windows is this repo's cache
+archives on the driving machine). When a `ci.*` script and the workflow disagree, the
+workflow is right and the script is stale.
 
 ### Desktop end-to-end test (Linux)
 
